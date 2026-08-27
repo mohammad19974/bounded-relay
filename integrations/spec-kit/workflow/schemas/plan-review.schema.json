@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/spec-kit/plan-review.schema.json",
+  "title": "BoundedRelay dual plan review evidence",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "runId",
+    "nonce",
+    "state",
+    "revision",
+    "claudeReview",
+    "codexReview",
+    "reconciliation",
+    "preparedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "plan-review" },
+    "runId": { "$ref": "#/$defs/id" },
+    "nonce": { "$ref": "#/$defs/id" },
+    "state": { "enum": ["pending", "claude-frozen", "complete"] },
+    "revision": { "$ref": "#/$defs/revision" },
+    "claudeReview": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/review" }]
+    },
+    "codexReview": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/review" }]
+    },
+    "reconciliation": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["verdict", "summary", "completedAt"],
+          "properties": {
+            "verdict": { "enum": ["approved", "changes-requested"] },
+            "summary": { "type": "string", "minLength": 1, "maxLength": 8000 },
+            "completedAt": { "type": "string", "format": "date-time" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "preparedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "revision": {
+      "type": "object",
+      "required": ["head", "artifacts", "comparison", "worktreeSha256", "seal"],
+      "properties": {
+        "head": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+        },
+        "artifacts": { "type": "array", "minItems": 2 },
+        "comparison": { "type": ["object", "null"] },
+        "worktreeSha256": { "type": ["string", "null"] },
+        "seal": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "provider",
+        "status",
+        "modelSource",
+        "model",
+        "revisionSeal",
+        "verdict",
+        "summary",
+        "findings",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "provider": { "enum": ["claude", "codex"] },
+        "reviewId": { "$ref": "#/$defs/id" },
+        "status": { "const": "complete" },
+        "modelSource": { "enum": ["host-selected", "worker-resolved"] },
+        "model": { "type": ["string", "null"] },
+        "reasoningEffort": {
+          "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+        },
+        "jobId": { "type": "string" },
+        "sddReview": { "$ref": "#/$defs/sddReview" },
+        "revisionSeal": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "verdict": { "enum": ["approved", "changes-requested"] },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "findings": { "type": "array", "maxItems": 100 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "sddReview": {
+      "type": "object",
+      "required": [
+        "tool",
+        "phase",
+        "mode",
+        "expectedRevision",
+        "seal",
+        "hostEvidenceDigest",
+        "hostEvidence",
+        "codexEvidence",
+        "gate"
+      ],
+      "properties": {
+        "tool": { "const": "codex_worker_sdd_review" },
+        "phase": { "enum": ["plan", "implementation", "convergence"] },
+        "mode": { "const": "strict" },
+        "expectedRevision": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+        },
+        "seal": { "type": "object" },
+        "hostEvidenceDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "hostEvidence": { "type": "object" },
+        "codexEvidence": { "type": "object" },
+        "gate": { "type": "object" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

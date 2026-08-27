@@ -34,6 +34,7 @@ export async function collectWorkerHealth(
       "--ignore-user-config",
       "--ignore-rules",
       "--color",
+      "--output-schema",
     ].every((flag) => execHelp.output.includes(flag));
   const warnings = [
     ...(!loginStatus.ok

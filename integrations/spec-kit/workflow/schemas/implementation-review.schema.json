@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/spec-kit/implementation-review.schema.json",
+  "title": "BoundedRelay dual implementation review evidence",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "runId",
+    "nonce",
+    "state",
+    "revision",
+    "sourceEvidence",
+    "codexReviewPolicy",
+    "checks",
+    "checksSha256",
+    "claudeReview",
+    "codexReview",
+    "verdict",
+    "preparedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "enum": ["implementation-review", "convergence-review"] },
+    "runId": { "type": "string" },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "state": { "enum": ["pending", "claude-frozen", "complete"] },
+    "revision": { "type": "object" },
+    "sourceEvidence": {
+      "type": "object",
+      "required": ["kind", "sha256", "finalRevision"],
+      "properties": {
+        "kind": { "enum": ["execution", "implementation-review"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "finalRevision": { "$ref": "#/$defs/revision" }
+      },
+      "additionalProperties": false
+    },
+    "codexReviewPolicy": {
+      "type": "object",
+      "required": ["source", "model", "reasoningEffort", "reason"],
+      "properties": {
+        "source": { "const": "server-allowlisted" },
+        "model": { "type": ["string", "null"] },
+        "reasoningEffort": {
+          "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+        },
+        "reason": {
+          "enum": [
+            "server-default-independent-review",
+            "critical-cross-provider-review"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/checkReceipt" }
+    },
+    "checksSha256": { "$ref": "#/$defs/sha256" },
+    "claudeReview": { "type": ["object", "null"] },
+    "codexReview": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": [
+            "provider",
+            "status",
+            "modelSource",
+            "model",
+            "reasoningEffort",
+            "jobId",
+            "revisionSeal",
+            "verdict",
+            "summary",
+            "findings",
+            "startedAt",
+            "completedAt",
+            "sddReview"
+          ],
+          "properties": {
+            "provider": { "const": "codex" },
+            "status": { "const": "complete" },
+            "modelSource": { "const": "worker-resolved" },
+            "model": { "type": ["string", "null"] },
+            "reasoningEffort": {
+              "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+            },
+            "jobId": { "type": "string" },
+            "revisionSeal": { "type": "string" },
+            "verdict": { "enum": ["approved", "changes-requested"] },
+            "summary": { "type": "string" },
+            "findings": { "type": "array" },
+            "startedAt": { "type": "string" },
+            "completedAt": { "type": "string" },
+            "sddReview": {
+              "type": "object",
+              "required": [
+                "tool",
+                "phase",
+                "mode",
+                "expectedRevision",
+                "seal",
+                "hostEvidenceDigest",
+                "hostEvidence",
+                "codexEvidence",
+                "gate"
+              ],
+              "properties": {
+                "tool": { "const": "codex_worker_sdd_review" },
+                "phase": { "enum": ["implementation", "convergence"] },
+                "mode": { "const": "strict" },
+                "expectedRevision": { "type": "string" },
+                "seal": { "type": "object" },
+                "hostEvidenceDigest": { "type": "string" },
+                "hostEvidence": { "type": "object" },
+                "codexEvidence": { "type": "object" },
+                "gate": { "type": "object" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "verdict": { "enum": ["approved", "changes-requested", null] },
+    "preparedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "revision": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+    },
+    "checkReceipt": {
+      "type": "object",
+      "required": [
+        "id",
+        "source",
+        "profile",
+        "commandLabel",
+        "commandSha256",
+        "cwd",
+        "exitCode",
+        "stdoutSha256",
+        "stderrSha256",
+        "testedTree",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "source": { "const": "host-executed" },
+        "profile": { "$ref": "#/$defs/id" },
+        "commandLabel": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "commandSha256": { "$ref": "#/$defs/sha256" },
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "exitCode": { "const": 0 },
+        "stdoutSha256": { "$ref": "#/$defs/sha256" },
+        "stderrSha256": { "$ref": "#/$defs/sha256" },
+        "testedTree": { "$ref": "#/$defs/revision" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

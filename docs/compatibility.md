@@ -6,13 +6,13 @@ current CI and local `doctor` output.
 
 ## Runtime matrix
 
-| Component   | v0.1 requirement                                                           | Notes                                                                                                                                                                                                        |
-| ----------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Node.js     | `>=22.13.0`                                                                | Node 22 and 24 are the intended CI lines.                                                                                                                                                                    |
-| Claude Code | Local stdio MCP support                                                    | Configure with `claude mcp add --transport stdio`. No exact Claude Code version is pinned yet.                                                                                                               |
-| Codex CLI   | `codex exec --json` plus required flags                                    | Must advertise `--strict-config`, `--sandbox`, `--ask-for-approval`, `--cd`, `--json`, `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, and `--color`; prompts must be accepted from stdin with `-`. |
-| Git         | Modern CLI with clone, detached checkout, status, diff, and ref inspection | Proposal mode additionally needs `git diff --binary --full-index`.                                                                                                                                           |
-| MCP         | SDK-supported local stdio transport                                        | HTTP, SSE, and remote deployment are not supported.                                                                                                                                                          |
+| Component   | v0.1 requirement                                                           | Notes                                                                                                                                                                                                                           |
+| ----------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js     | `>=22.13.0`                                                                | Node 22 and 24 are the intended CI lines.                                                                                                                                                                                       |
+| Claude Code | Local stdio MCP support                                                    | Configure with `claude mcp add --transport stdio`. No exact Claude Code version is pinned yet.                                                                                                                                  |
+| Codex CLI   | `codex exec --json` plus required flags                                    | Must advertise `--strict-config`, `--sandbox`, `--ask-for-approval`, `--cd`, `--json`, `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--color`, and `--output-schema`; prompts must be accepted from stdin with `-`. |
+| Git         | Modern CLI with clone, detached checkout, status, diff, and ref inspection | Proposal mode additionally needs `git diff --binary --full-index`.                                                                                                                                                              |
+| MCP         | SDK-supported local stdio transport                                        | HTTP, SSE, and remote deployment are not supported.                                                                                                                                                                             |
 
 Run:
 
@@ -83,6 +83,12 @@ Submodules are intentionally unsupported for proposals in v0.1. Rename detection
 is disabled when building and validating proposal artifacts; a rename is
 represented by its underlying delete/add changes.
 
+Strict SDD review additionally requires a clean full revision, no `.gitmodules`,
+bounded regular artifact files, and a disposable detached clone that can be
+proven to match the revision seal. Draft review remains source-based and
+advisory. Analyze mode can inspect a repository with submodules because it does
+not claim strict isolated-review evidence.
+
 ## Model compatibility
 
 The worker has no built-in model catalog. Omit `model` to use Codex's effective
@@ -90,9 +96,26 @@ default, or have the server owner populate `CCW_ALLOWED_MODELS` with exact
 identifiers. A model being allowlisted does not prove that the current account
 can use it.
 
-Reasoning effort accepts `low`, `medium`, `high`, `xhigh`, and `max`, but
-support can differ by model or Codex version. Provider rejection becomes a job
-failure; the worker does not silently select a different model.
+Reasoning effort accepts `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`,
+but support can differ by model or Codex version. Provider rejection becomes a
+job failure; the worker does not silently select a different model or effort.
+
+The packaged Adaptive SDD workflow treats `gpt-5.6-sol` plus `ultra` as an
+explicit critical-task profile. The model must be present in
+`CCW_ALLOWED_MODELS`, and the installed CLI/account must support the exact
+combination. The workflow stops when it is unavailable; it does not fall back to
+another Codex model or replace the model selected by Claude Code.
+
+## Optional integration compatibility
+
+`boundedrelay sdd validate` verifies the required packaged integration files are
+regular files and that its JSON manifests parse. It does not run Spec Kit,
+invoke Claude Code, or prove host compatibility.
+
+The packaged workflow declares Spec Kit `>=1.0.1`. Validate and load the Claude
+Code plugin separately with the installed host CLI. Automated project tests do
+not require Claude Code or provider credentials, so a successful `npm run check`
+is not a live Claude plugin acceptance test.
 
 ## Versioning policy
 

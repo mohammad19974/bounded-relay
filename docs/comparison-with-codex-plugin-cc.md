@@ -19,10 +19,12 @@ This comparison was reviewed against the public official-plugin README on
 
 | Area                            | Official plugin                                                             | BoundedRelay v0.1                                                                                                  |
 | ------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Integration surface             | Claude Code plugin commands and a subagent                                  | Seven base stdio MCP tools plus one startup-gated proposal tool, with JSON inputs and results                      |
+| Integration surface             | Claude Code plugin commands and a subagent                                  | Nine base stdio MCP tools plus one startup-gated proposal tool, with JSON inputs and results                       |
 | Codex runtime                   | Local Codex CLI and Codex app server, using the user's Codex setup          | Local `codex exec --json` with an explicit required-flag contract                                                  |
 | Policy ownership                | Follow the official plugin and Codex configuration model                    | Server-owned workspace/model/environment/resource allowlists and limits                                            |
 | Review and background lifecycle | Built in                                                                    | Also available; this is overlap, not differentiation                                                               |
+| SDD routing                     | Follow the official plugin's current workflow                               | Model-free `sdd-routing-v2`: quality-first lane fit, neutral share metadata, fingerprint, and single-writer waves  |
+| Strict review evidence          | Follow the official plugin's current review-gate contract                   | Frozen host evidence plus fresh Codex evidence bound to one current content-addressed seal                         |
 | Proposed edits                  | Official rescue workflows can attempt fixes under their documented controls | Optional proposal runs only in a disposable clean clone and returns a validated binary patch that is never applied |
 | Job durability                  | Follow the official plugin's current session behavior                       | Process-memory only; server exit loses all jobs and results                                                        |
 | Distribution                    | Official Claude Code marketplace plugin                                     | Unpublished local development package in v0.1                                                                      |
@@ -43,6 +45,8 @@ Evaluate this worker only when all of these are relevant:
   environment names, queue size, runtime, output, and patch size;
 - write-capable work must be reduced to a revision-pinned patch artifact
   generated outside the source checkout;
+- a consumer workflow needs deterministic task routing or content-addressed
+  dual-review evidence through MCP;
 - process-lifetime jobs and manual patch review are acceptable.
 
 ## Using both

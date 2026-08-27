@@ -1,5 +1,13 @@
 import type { WorkerConfig } from "../config/worker-config.js";
 import type { ResolvedJobRequest } from "../core/types.js";
+import { fileURLToPath } from "node:url";
+
+const SDD_REVIEW_OUTPUT_SCHEMA = fileURLToPath(
+  new URL(
+    "../../schemas/sdd/v1/codex-review-output.schema.json",
+    import.meta.url,
+  ),
+);
 
 export interface CodexInvocation {
   readonly executable: string;
@@ -39,8 +47,11 @@ export function buildCodexInvocation(
     "--ignore-rules",
     "--color",
     "never",
-    "-",
   );
+  if (request.sddReview !== undefined) {
+    args.push("--output-schema", SDD_REVIEW_OUTPUT_SCHEMA);
+  }
+  args.push("-");
 
   return {
     executable: config.codexExecutable,

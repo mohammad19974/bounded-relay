@@ -5,6 +5,7 @@ Start with non-secret diagnostics:
 ```bash
 boundedrelay doctor
 boundedrelay config
+boundedrelay sdd validate
 claude mcp list
 ```
 
@@ -107,6 +108,81 @@ Environment changes require restarting or re-registering the server. Check
 `codex_worker_capabilities`; its `tools` list is authoritative for the running
 process.
 
+## SDD integration files are missing or invalid
+
+Run:
+
+```bash
+boundedrelay sdd validate
+boundedrelay sdd path
+```
+
+The first command validates the packaged file structure; the second prints the
+exact integration root used by this build. If either fails after a source
+change, rebuild and inspect the packed artifact. Do not copy an unrelated
+`.specify/` directory as a replacement.
+
+This check does not invoke Claude Code. On a host with Claude installed, also
+run:
+
+```bash
+INTEGRATION_ROOT="$(boundedrelay sdd path)"
+claude plugin validate "$INTEGRATION_ROOT/claude-code-plugin"
+```
+
+If local plugin loading remains unavailable, use the direct MCP registration in
+the [getting-started guide](getting-started.md).
+
+## SDD route request is rejected
+
+Check that task IDs are unique and safe, dependencies name known tasks and are
+acyclic, effort is an integer `1..100`, and every task uses a supported risk,
+authority, and kind. Read-only tasks must not declare write scopes; write tasks
+must declare safe repository-relative scopes. Use `neutralCodexShareBps`, not
+the removed target/quota field.
+
+The default 5,000-basis-point value is neutral metadata. `sdd-routing-v2` puts
+hard eligibility and versioned task-kind fit first, so a 100% assignment to one
+lane can be valid. Risk does not bias the lane; critical risk is handled by the
+optional workflow's cross-provider review/profile policy.
+
+## `REVIEW_INVALID`
+
+The specialized SDD review rejected an input, artifact, seal, or structured
+Codex decision. Common causes are:
+
+- unsafe, duplicate, missing, symlinked, non-regular, or oversized artifacts;
+- dirty strict-mode worktree or missing full `expectedRevision`;
+- malformed, fenced, oversized, or schema-invalid Codex JSON;
+- duplicate finding IDs or a `changes-requested` verdict with no finding;
+- a finding outside the sealed artifact set.
+
+Do not replace `codex_worker_sdd_review` with generic analysis; it cannot
+satisfy a strict gate. Correct the evidence or checkout, then submit a fresh
+review.
+
+## Review completed but the gate is blocked or stale
+
+Job completion means BoundedRelay parsed and evaluated the review, not that the
+gate approved. Continue only for a strict result with `gate.passed: true` and
+`gate.status: "ready"`.
+
+- `blocked` means evidence was valid enough to evaluate but a reviewer requested
+  changes or the two evidence records did not satisfy one gate.
+- `stale` means HEAD, clean state, workspace fingerprint, or reviewed artifact
+  content changed.
+
+Resolve findings, create a new authorized clean checkpoint, freeze a new Claude
+host review, and start a fresh Codex review. Never edit the old seal or replay
+old evidence.
+
+## Critical `gpt-5.6-sol` / `ultra` profile fails
+
+The optional workflow requires this explicit profile for its critical-task Codex
+lane. Confirm `gpt-5.6-sol` is in `CCW_ALLOWED_MODELS` and that the local Codex
+CLI/account supports `ultra`. If the provider rejects it, the job must fail;
+BoundedRelay does not silently downgrade or change the Claude host model.
+
 ## `WORKTREE_DIRTY`
 
 Proposal mode requires a clean source worktree, including no untracked files,
@@ -114,21 +190,22 @@ because the binary patch must target one exact committed revision. Review and
 resolve the source state yourself. The worker will not stash, discard, commit,
 or copy uncommitted changes.
 
-Analyze mode remains available for dirty repositories.
+Analyze mode and draft SDD review remain available for dirty repositories, but
+neither a draft nor generic analysis can satisfy a strict review gate.
 
 ## `REVISION_MISMATCH`
 
 Call `codex_worker_workspace` again and compare its `revision` to
 `expectedRevision`. Do not shorten the object ID. If `HEAD` changed, decide
-whether the task and write-path scope are still valid before submitting a new
-proposal.
+whether the task, reviewed artifacts, and write-path scope are still valid
+before submitting a new review or proposal.
 
 ## `SUBMODULES_UNSUPPORTED`
 
-Proposal mode refuses any repository with `.gitmodules` in v0.1. Use read-only
-analysis, or create a separate disposable repository without submodules outside
-this worker. Do not remove project submodule configuration merely to bypass the
-check.
+Proposal mode and isolated strict SDD review refuse any repository with
+`.gitmodules` in v0.1. Use read-only analysis or draft advisory review, or
+create a separate disposable repository without submodules outside this worker.
+Do not remove project submodule configuration merely to bypass the check.
 
 ## `LEASE_CONFLICT`
 

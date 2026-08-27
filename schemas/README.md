@@ -6,10 +6,21 @@ These draft 2020-12 schemas document the v0.1 public data contract:
 - [`workspace-summary.schema.json`](workspace-summary.schema.json)
 - [`public-job-snapshot.schema.json`](public-job-snapshot.schema.json)
 - [`job-result.schema.json`](job-result.schema.json)
+- [`sdd/v1/route-input.schema.json`](sdd/v1/route-input.schema.json)
+- [`sdd/v1/route-plan.schema.json`](sdd/v1/route-plan.schema.json)
+- [`sdd/v1/review-input.schema.json`](sdd/v1/review-input.schema.json)
+- [`sdd/v1/codex-review-output.schema.json`](sdd/v1/codex-review-output.schema.json)
+- [`sdd/v1/review-artifact.schema.json`](sdd/v1/review-artifact.schema.json)
 
 Runtime MCP input validation is implemented with Zod in `src/mcp/server.ts`;
 source and contract tests are authoritative. Keep these schemas synchronized
 whenever a public field changes.
+
+`sdd/v1/route-input.schema.json` uses `neutralCodexShareBps`. It is neutral
+non-quota metadata for the `sdd-routing-v2` policy; hard eligibility and
+versioned task-kind fit take precedence. `review-artifact.schema.json` describes
+the validated terminal artifact, including gate freshness. A generic analysis
+result is not review evidence and cannot satisfy that schema's strict gate.
 
 `tool-inputs.schema.json` is a definition bundle rather than a schema for an
 invented MCP envelope. Validate an arguments object against the `$defs` entry

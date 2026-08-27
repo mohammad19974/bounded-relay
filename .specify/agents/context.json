@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "project": "BoundedRelay",
+  "activeFeature": "specs/001-adaptive-dual-agent-sdd",
+  "phase": "complete",
+  "scope": [
+    "src/sdd",
+    "src/core",
+    "src/mcp",
+    "src/runtime",
+    "src/config",
+    "src/security",
+    "schemas/sdd/v1",
+    "integrations",
+    "docs",
+    "tests"
+  ],
+  "routingPolicy": {
+    "version": "sdd-routing-v2",
+    "fitPolicyVersion": "sdd-task-fit-v1",
+    "neutralCodexShareBasisPoints": 5000,
+    "trueOddNeutralTiePreference": "codex",
+    "claudeLane": "claude-host",
+    "claudeModelSource": "host-selected"
+  },
+  "verification": "Passed 2026-08-28: full npm run check with an isolated npm cache; 20 test files and 269 tests; 93.37% statements, 90% branches, 97.57% functions, and 93.34% lines; build and 234-file npm pack dry-run; SDD validate/path and doctor smoke checks; convergence and git diff --check"
+}

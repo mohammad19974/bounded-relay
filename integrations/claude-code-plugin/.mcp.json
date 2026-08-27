@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "boundedrelay": {
+      "type": "stdio",
+      "command": "boundedrelay",
+      "args": ["serve"]
+    }
+  }
+}

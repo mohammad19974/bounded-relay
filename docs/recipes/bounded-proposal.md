@@ -20,7 +20,8 @@ Create a bounded proposal through bounded-relay; do not edit the source checkout
 3. Submit codex_worker_propose with expectedRevision equal to that exact revision and writePaths
    limited to src/parser and tests/parser.
 4. Poll status with bounded waits, passing the last revision as afterRevision. Show only the
-   sanitized activity label and counters. Do not start another writer for this repository.
+   sanitized activity label and counters. Respect the routing wave and do not start another
+   writer for this repository.
 5. Retrieve the terminal result with includePatch=false.
 6. Show changedFiles, patchBytes, patchSha256, Codex's summary, checks, and risks.
 7. Ask me before retrieving includePatch=true. Never apply, commit, or push it.

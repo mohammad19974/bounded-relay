@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/sdd/v1/route-input.schema.json",
+  "title": "BoundedRelay SDD route input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tasks"],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "neutralCodexShareBps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "default": 5000
+    }
+  },
+  "$defs": {
+    "lane": { "enum": ["codex", "claude-host"] },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "effortPoints", "risk", "authority", "kind"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+        },
+        "effortPoints": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "risk": { "enum": ["low", "medium", "high", "critical"] },
+        "authority": { "enum": ["read-only", "write"] },
+        "kind": {
+          "enum": [
+            "analysis",
+            "planning",
+            "architecture",
+            "implementation",
+            "debugging",
+            "testing",
+            "refactor",
+            "review",
+            "security-review",
+            "documentation",
+            "integration"
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+          }
+        },
+        "writeScopes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        },
+        "eligibleLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/lane" }
+        },
+        "preferredLane": { "$ref": "#/$defs/lane" }
+      }
+    }
+  }
+}

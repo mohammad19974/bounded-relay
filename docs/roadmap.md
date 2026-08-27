@@ -8,6 +8,10 @@ implemented only when it is present in source, tested, documented, and listed in
 
 - local stdio MCP transport;
 - capabilities and workspace inspection;
+- deterministic `sdd-routing-v2` quality-first task routing with neutral share
+  metadata, fingerprints, explanations, and single-writer waves;
+- content-addressed strict/draft SDD review with frozen host evidence, fresh
+  structured Codex review, and fail-closed freshness gates;
 - in-memory asynchronous job queue;
 - read-only analysis by default;
 - real Codex JSONL event counters and sanitized live activity;
@@ -19,7 +23,29 @@ implemented only when it is present in source, tested, documented, and listed in
 - clean revision pinning, cross-process proposal lease,
   protected-path/ref/symlink/size validation;
 - binary patch metadata with explicit patch-body retrieval;
-- no direct write or apply path.
+- optional packaged Spec Kit workflow/extension and Claude Code plugin, with
+  local path discovery and structural validation;
+- mechanically verified Spec Kit `execution.json` ledgers with exact dependency
+  waves, at most one writer, direct-child non-merge checkpoint commits,
+  disposable-index patch-to-tree verification, routed Codex model/effort
+  matching, and redacted tree-bound check receipts;
+- committed standard `tasks.md` manifests with exact pending-ID route coverage,
+  plus descendant routing checkpoints that retain an unchanged, fully
+  revalidated ancestor plan review;
+- implementation review over the routing-base-to-final-HEAD comparison (bounded
+  to 256 changed paths), followed by convergence review chained from the
+  approved implementation revision;
+- fail-closed High/Critical review findings and convergence audits that never
+  implement directly: new tasks require a fresh routed run, while no new work
+  proceeds to a no-delta review;
+- run-local digest-only SDD proof packs that rerun authoritative routing, strict
+  routing projections, strict evidence checks, historical wave validation, exact
+  execution/review source chains, and convergence freshness before binding
+  evidence fingerprints, review job IDs, checkpoint/check digests, and accepted
+  proposal digests;
+- run-local handoff drafting with proof revalidation in an isolated clone,
+  atomic canonical publication, and idempotent verification retries;
+- no direct source-worktree write or patch-integration path.
 
 ## Candidates after real-world evaluation
 
@@ -55,13 +81,15 @@ Persistence is not a small extension to the current process-lifetime model.
 - publish a signed/provenance-backed npm package after the name and ownership
   are confirmed;
 - provide a version-pinned Claude Code project example;
-- evaluate an optional Claude Code plugin wrapper only if it adds installation
-  value without confusing this project with OpenAI's official plugin.
+- evaluate a Claude Code marketplace distribution only after live host
+  validation and identity/ownership are confirmed.
 
 ## Explicit non-goals
 
 - replacing or impersonating `openai/codex-plugin-cc`;
-- Codex calling Claude or recursive agent delegation;
+- Codex calling Claude, nested BoundedRelay workers, or cross-provider
+  recursion; bounded Codex-internal read-only subagents remain limited to the
+  documented `ultra` invocation policy;
 - automatically applying, committing, pushing, or deploying a proposal;
 - generic shell or terminal access over MCP;
 - automatic “best model” routing without reproducible evals;

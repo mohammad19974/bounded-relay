@@ -5,13 +5,19 @@ These rules apply to human and AI contributors working in this repository.
 ## Product boundary
 
 BoundedRelay is a local stdio MCP server that delegates bounded jobs from Claude
-Code to the supported `codex exec --json` interface.
+Code to the supported `codex exec --json` interface. It also provides optional,
+additive SDD primitives for deterministic task routing and content-addressed
+dual review.
 
-Version 0.1 has two lanes:
+Version 0.1 keeps two established Codex execution modes:
 
 - `analyze`: read-only execution in the validated source Git repository;
 - `proposal`: opt-in execution in a disposable clean local clone, returning a
   validated binary patch that is never applied by this project.
+
+The SDD router separately names two assignment lanes: `codex` and `claude-host`.
+The latter is the current Claude Code session using its host-selected model. The
+worker must never launch Claude or choose a Claude model.
 
 Do not add direct source-worktree writes, automatic patch application, remote
 mutation, credential storage, model-quality claims, persistent jobs, or an audit
@@ -62,6 +68,10 @@ provider credentials or a paid model call.
   repository data.
 - Do not commit, tag, publish, or create a release unless the user explicitly
   authorizes it.
-- This repository does not vendor or require Spec Kit. Architecture decisions
-  live under `docs/adr/`; `docs/integrations/spec-kit.md` is an optional recipe
-  for consumer repositories, not project governance.
+- This source repository uses `.specify/` as its own shared governance source of
+  truth and ships an original optional integration under `integrations/`. Spec
+  Kit is not an MCP runtime dependency, and consumer repositories must use their
+  own initialized governance rather than copying this repository's `.specify/`
+  directory.
+- Architecture decisions live under `docs/adr/`. Keep the distributable
+  integration, public docs, schemas, tests, and `.specify/` governance aligned.

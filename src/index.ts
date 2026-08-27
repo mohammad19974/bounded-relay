@@ -18,3 +18,18 @@ export {
   createWorkerApplication,
   type WorkerApplication,
 } from "./worker-application.js";
+export * from "./sdd/routing/index.js";
+export * from "./sdd/review/index.js";
+export {
+  SddReviewService,
+  validateSddReviewInput,
+  type PreparedSddReview,
+  type SddHostReviewInput,
+  type SddReviewArtifact,
+  type StartSddReviewInput,
+} from "./sdd/review-job.js";
+export {
+  locateIntegrationPack,
+  validateIntegrationPack,
+  type IntegrationPackValidation,
+} from "./sdd/integration-pack.js";

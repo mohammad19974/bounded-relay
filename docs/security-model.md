@@ -22,6 +22,8 @@ Codex and the operating system, and what remains the user's responsibility.
 - project-scoped MCP configuration from a repository not yet trusted;
 - paths, model identifiers, revisions, idempotency keys, and limits received
   through MCP.
+- task-graph metadata, effort estimates, host review evidence, reviewed
+  artifacts, and run-local workflow evidence.
 
 The task body supplies an objective only. The worker-generated prompt places
 authority and hard constraints outside that body; task text cannot enable
@@ -42,6 +44,11 @@ actions.
   tree.
 - A delegation-depth marker prevents the worker from recursively starting itself
   through Codex.
+- When `reasoningEffort` is explicitly `ultra`, the worker prompt permits only
+  Codex-managed read-only internal subagents inside the same invocation,
+  sandbox, authority, and path boundary. The parent invocation remains the only
+  proposal writer; Claude calls, nested workers, and authority expansion remain
+  prohibited.
 
 ### Analyze mode
 
@@ -53,6 +60,50 @@ actions.
 This project requests the supported Codex sandbox; it is not an independent
 kernel sandbox. Codex may read repository content and communicate with OpenAI
 according to Codex CLI and account policy.
+
+Generic analysis is advisory. Even when it reviews Spec Kit files, it cannot
+produce the sealed evidence required by a strict SDD gate.
+
+### SDD routing
+
+`codex_worker_sdd_route` performs no provider call and no filesystem write. It
+rejects duplicate or unsafe task IDs, unknown or cyclic dependencies, invalid
+effort/authority/kind values, unsafe write scopes, and an invalid lane set. The
+result follows a fixed policy version and includes a recomputable fingerprint.
+
+Routing never grants execution authority. A `codex` write assignment must still
+use the isolated proposal path, and the `claude-host` coordinator remains
+responsible for honoring its assigned scope. Each returned wave contains at most
+one writer; unrelated programs are outside that cooperative schedule.
+
+### SDD review
+
+The specialized review path enforces these additional controls:
+
+- strict mode requires a clean workspace and an exact full Git revision;
+- 1–64 canonical repository-relative artifact paths are accepted;
+- artifact traversal, `.git` segments, backslashes, absolute/drive paths,
+  symlinks, non-regular files, and paths outside the repository are rejected;
+- each artifact is limited to 2 MiB and the set to 8 MiB;
+- artifact bytes, clean state, revision, workspace fingerprint, review mode, and
+  schema version are content-addressed;
+- Claude host evidence is validated and frozen before Codex starts, but its
+  summary and findings are not included in the Codex task;
+- strict mode rejects submodules, creates a detached origin-free local clone at
+  the sealed revision, disables hooks, proves it matches the seal, and rechecks
+  the source before Codex starts;
+- Codex runs in that clone fresh with `read-only`, approval policy `never`,
+  ephemeral state, and the packaged output schema;
+- draft mode remains source-based and cannot approve a gate;
+- raw Codex review output must be one unfenced JSON object, at most 64 KiB, with
+  at most 100 bounded findings;
+- finalization rechecks Git state and every artifact before evaluating the gate.
+
+The gate fails closed when evidence is missing, malformed, stale, belongs to a
+different seal or phase, reuses a review ID, requests changes, or came from
+draft mode. A job can complete successfully while its gate remains blocked or
+stale. Host evidence is an attestation supplied by the host; BoundedRelay does
+not authenticate Claude, launch it, or verify a declared model label.
 
 ### Proposal mode
 
@@ -146,6 +197,8 @@ defense for a local user account.
 - job lifecycle, sanitized activity, timing, and event counters;
 - the final Codex message;
 - optional proposal patch;
+- frozen host review evidence, revision seals, and validated Codex review
+  evidence for SDD review jobs;
 - session ID and usage reported by Codex;
 - idempotency-key mapping.
 
@@ -154,9 +207,11 @@ data disappears when the server process exits.
 
 ### On disk
 
-Only proposal workspaces and lease metadata use `CCW_STATE_DIR`. The project has
-no persistent job store and no audit ledger. A crash may leave a temporary
-directory or stale lease until a later startup or careful manual cleanup.
+Only proposal/review workspaces and proposal lease metadata use `CCW_STATE_DIR`.
+The project has no persistent job store and no audit ledger. A crash may leave a
+temporary directory that requires careful manual cleanup after confirming no
+worker is active. Stale proposal leases are evaluated separately by the lease
+manager.
 
 ### Outside this project
 
@@ -176,6 +231,11 @@ worker cannot make either provider offline or change their retention terms.
   directory. It does not prevent manual edits, other tools, or workers
   configured with another state directory.
 - Analyze jobs do not take a writer lease because they are read-only.
+- Routing waves and host write-scope compliance are cooperative. BoundedRelay
+  cannot stop Claude Code or an unrelated tool from ignoring them.
+- The neutral 50/50 routing value does not override task-kind fit and does not
+  measure or guarantee provider tokens, spend, time, quality, or resource
+  savings.
 - A clean source check is a point-in-time precondition. External processes can
   change the source later; the proposal still targets the pinned revision and is
   never applied automatically.
@@ -190,6 +250,9 @@ worker cannot make either provider offline or change their retention terms.
 - Set `CCW_ALLOWED_ROOTS` to specific projects, never a home directory or
   filesystem root.
 - Keep proposals disabled until read-only analysis works as expected.
+- Treat `codex_worker_analyze` as advisory; use `codex_worker_sdd_review` for
+  strict gates and require `gate.passed: true` with `gate.status: "ready"`.
+- Re-run both reviews after any reviewed revision or artifact changes.
 - Keep auth environment forwarding disabled when saved Codex login is
   sufficient.
 - Inspect `codex_worker_workspace` before proposal submission.

@@ -19,7 +19,7 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
         },
         "reasoningEffort": {
-          "enum": ["low", "medium", "high", "xhigh", "max"]
+          "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
         },
         "timeoutMs": { "type": "integer", "minimum": 1000 },
         "idempotencyKey": {
@@ -41,6 +41,12 @@
         "cwd": { "type": "string", "maxLength": 4096 }
       },
       "additionalProperties": false
+    },
+    "codex_worker_sdd_route": {
+      "$ref": "./sdd/v1/route-input.schema.json"
+    },
+    "codex_worker_sdd_review": {
+      "$ref": "./sdd/v1/review-input.schema.json"
     },
     "codex_worker_analyze": {
       "type": "object",

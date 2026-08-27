@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/workflow/v1/handoff-context.schema.json",
+  "title": "BoundedRelay handoff proof binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "runId",
+    "proofFile",
+    "draftFile",
+    "proofSha256",
+    "bundleFingerprint",
+    "finalRevision",
+    "marker",
+    "preparedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "handoff-context" },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "proofFile": { "const": "evidence/proof-pack.json" },
+    "draftFile": { "const": "handoff-draft.md" },
+    "proofSha256": { "$ref": "#/$defs/sha256" },
+    "bundleFingerprint": { "$ref": "#/$defs/sha256" },
+    "finalRevision": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+    },
+    "marker": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "preparedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

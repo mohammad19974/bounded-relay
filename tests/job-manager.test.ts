@@ -17,6 +17,8 @@ import type {
 } from "../src/core/types.js";
 import { GitClient } from "../src/runtime/git-client.js";
 import { ProposalWorkspace } from "../src/runtime/proposal-workspace.js";
+import { ReviewWorkspace } from "../src/runtime/review-workspace.js";
+import { SddReviewService } from "../src/sdd/review-job.js";
 import {
   createTestRepository,
   makeConfig,
@@ -80,11 +82,14 @@ async function makeManager(
     ...configOverrides,
   });
   const runtime = new ControlledRuntime();
+  const git = new GitClient(config);
   const manager = new JobManager({
     config,
     runtime,
-    proposalWorkspace: new ProposalWorkspace(config, new GitClient(config)),
+    proposalWorkspace: new ProposalWorkspace(config, git),
+    reviewWorkspace: new ReviewWorkspace(config, git),
     leases: new LeaseManager(stateDirectory),
+    reviews: new SddReviewService(config, git),
   });
   await manager.initialize();
   return { manager, runtime, repository };
@@ -93,11 +98,14 @@ async function makeManager(
 function makeValidationManager(): JobManager {
   const config = makeConfig();
   const runtime = new ControlledRuntime();
+  const git = new GitClient(config);
   return new JobManager({
     config,
     runtime,
-    proposalWorkspace: new ProposalWorkspace(config, new GitClient(config)),
+    proposalWorkspace: new ProposalWorkspace(config, git),
+    reviewWorkspace: new ReviewWorkspace(config, git),
     leases: new LeaseManager(config.stateDirectory),
+    reviews: new SddReviewService(config, git),
   });
 }
 

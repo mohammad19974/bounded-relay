@@ -11,7 +11,7 @@ remain authoritative when a document drifts.
 - [Configuration](configuration.md) — startup policy, limits, model allowlist,
   environment, and state directory.
 - [MCP tool reference](tool-reference.md) — exact tool names, inputs, results,
-  lifecycle, and errors.
+  deterministic routing, structured dual review, lifecycle, and errors.
 - [Compatibility](compatibility.md) — Node.js, Claude Code, Codex CLI, Git,
   operating-system, and JSONL requirements.
 - [Troubleshooting](troubleshooting.md) — connection, policy, queue, runtime,
@@ -28,16 +28,21 @@ remain authoritative when a document drifts.
 - [Relationship to the official Codex plugin](comparison-with-codex-plugin-cc.md)
   — why the official integration remains the default and where this worker is
   intentionally different.
+- [Ecosystem comparison](ecosystem-comparison.md) — a neutral architectural
+  comparison with nearby orchestration and SDD projects, including ideas adopted
+  here and deliberate non-goals.
 - [Architecture decisions](adr/README.md) — accepted decisions and their
   consequences.
 
 ## Apply and extend
 
-- [Recipes](recipes/README.md) — read-only review, independent plan review, and
-  bounded proposal coordination.
-- [Optional Spec Kit integration](integrations/spec-kit.md) — add three bounded
-  Codex review gates to a consumer project's spec-driven workflow without making
-  Spec Kit a worker dependency.
+- [Recipes](recipes/README.md) — read-only review, deterministic task routing,
+  independent strict review, and bounded proposal coordination.
+- [Optional Adaptive SDD integration](integrations/spec-kit.md) — load the
+  packaged Spec Kit workflow/extension and Claude Code plugin; operate verified
+  manifest routing, tree-verified `execution.json` checkpoints, fail-closed
+  convergence, chained dual reviews, isolated proof revalidation, and atomic
+  handoff; and recover or remove it without making Spec Kit a worker dependency.
 - [Development](development.md) — repository layout, tests, quality gates, and
   release preparation.
 - [Roadmap](roadmap.md) — implemented scope, candidates, and explicit non-goals.
@@ -46,5 +51,7 @@ remain authoritative when a document drifts.
 - [Brand assets](assets/README.md) — generated cover, compact mark, prompts, and
   intended usage.
 
-This project does not vendor Spec Kit and has no remote service, persistent job
+This source repository uses `.specify/` for its own governance and packages
+original optional integration assets under `integrations/`. Spec Kit is not an
+MCP runtime dependency. The project still has no remote service, persistent job
 store, or release publishing automation in v0.1.

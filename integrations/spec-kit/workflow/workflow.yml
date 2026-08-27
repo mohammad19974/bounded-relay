@@ -1,0 +1,498 @@
+schema_version: "1.0"
+
+workflow:
+  id: boundedrelay-adaptive-sdd
+  name: "BoundedRelay Adaptive SDD"
+  version: "0.1.0"
+  author: boundedrelay-contributors
+  description:
+    "Claude-host coordinated SDD with frozen dual review, weighted provider
+    routing, wave-ordered BoundedRelay orchestration, convergence, and handoff"
+
+requires:
+  speckit_version: ">=1.0.1"
+  integrations:
+    any:
+      - claude
+
+inputs:
+  spec:
+    type: string
+    required: true
+    prompt: "Describe the feature or platform change"
+  scope:
+    type: string
+    required: true
+    prompt: "Exact authorized project scope"
+  feature_directory:
+    type: string
+    required: true
+    prompt: "Feature directory containing spec.md, plan.md, and tasks.md"
+  codex_share:
+    type: string
+    default: "50"
+    prompt:
+      "Soft Codex percentage for tasks still neutral after eligibility and fit"
+  spec_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  plan_review_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  plan_checkpoint_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  tasks_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  routing_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  wave_checkpoint_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  implementation_review_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  implementation_checkpoint_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  convergence_review_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  delivery_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+  handoff_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
+
+steps:
+  - id: preflight-inputs
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/preflight.mjs" "{{ context.run_id }}"
+    timeout: 30
+
+  - id: specify
+    command: speckit.specify
+    integration: claude
+    input:
+      args:
+        "Scope: {{ inputs.scope }}. Feature directory: {{
+        inputs.feature_directory }}. Feature: {{ inputs.spec }}"
+
+  - id: clarify
+    command: speckit.clarify
+    integration: claude
+    input:
+      args: "Resolve material ambiguity for {{ inputs.scope }} before approval"
+
+  - id: approve-spec
+    type: gate
+    message:
+      "Approve the clarified specification and exact authority boundary before
+      planning."
+    show_file: "{{ inputs.feature_directory }}/spec.md"
+    options: [approve, reject]
+    verdict_input: spec_verdict
+    on_reject: abort
+
+  - id: plan
+    command: speckit.plan
+    integration: claude
+    input:
+      args:
+        "Plan the approved feature at {{ inputs.feature_directory }} for {{
+        inputs.scope }}"
+
+  - id: approve-plan-checkpoint
+    type: gate
+    message:
+      "Strict dual review requires spec and plan at an exact committed revision
+      with a clean worktree. This workflow does not create the checkpoint
+      commit. Approve only after creating or authorizing that review checkpoint."
+    show_file: "{{ inputs.feature_directory }}/plan.md"
+    options: [approve, reject]
+    verdict_input: plan_checkpoint_verdict
+    on_reject: abort
+
+  - id: prepare-plan-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/plan-review.mjs" prepare "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: freeze-claude-plan-review
+    command: speckit.boundedrelay.plan-review
+    integration: claude
+    input:
+      args:
+        "phase=claude run_id={{ context.run_id }} feature_directory={{
+        inputs.feature_directory }}"
+
+  - id: verify-frozen-claude-plan-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/plan-review.mjs" verify-claude "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: independent-codex-plan-review
+    command: speckit.boundedrelay.plan-review
+    integration: claude
+    input:
+      args:
+        "phase=codex run_id={{ context.run_id }} feature_directory={{
+        inputs.feature_directory }} tool=codex_worker_sdd_review mode=strict;
+        preserve the already-verified Claude review and keep its findings out of
+        Codex focus"
+
+  - id: verify-dual-plan-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/plan-review.mjs" verify "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: approve-dual-plan-review
+    type: gate
+    message:
+      "Approve only when both frozen reviews match the same revision and
+      accepted findings are resolved. Any plan change requires two fresh
+      reviews."
+    show_file:
+      ".specify/workflows/runs/{{ context.run_id }}/evidence/plan-review.json"
+    options: [approve, reject]
+    verdict_input: plan_review_verdict
+    on_reject: abort
+
+  - id: checklist
+    command: speckit.checklist
+    integration: claude
+    input:
+      args:
+        "Validate requirements, boundaries, safety, verification, and delivery
+        gates"
+
+  - id: tasks
+    command: speckit.tasks
+    integration: claude
+    input:
+      args:
+        "Generate dependency-ordered, independently verifiable tasks for {{
+        inputs.scope }}"
+
+  - id: analyze-artifacts
+    command: speckit.analyze
+    integration: claude
+    input:
+      args:
+        "Check spec, plan, tasks, constitution, dependencies, and verification
+        consistency"
+
+  - id: approve-tasks
+    type: gate
+    message:
+      "Approve the analyzed task graph only after spec, plan, and tasks are
+      committed at a clean review checkpoint; required Codex proposals are
+      revision-pinned and this workflow never creates commits."
+    show_file: "{{ inputs.feature_directory }}/tasks.md"
+    options: [approve, reject]
+    verdict_input: tasks_verdict
+    on_reject: abort
+
+  - id: prepare-routing
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/routing.mjs" prepare "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: route-approved-tasks
+    command: speckit.boundedrelay.route
+    integration: claude
+    input:
+      args:
+        "run_id={{ context.run_id }} tool=codex_worker_sdd_route
+        neutral_codex_share_bps={{ inputs.codex_share }}00
+        metric=fit-neutral-estimated-effort odd_neutral_tie_break=codex
+        persist_fingerprint=true"
+
+  - id: verify-routing
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/routing.mjs" verify "{{ context.run_id
+      }}"
+    timeout: 30
+
+  - id: approve-routing
+    type: gate
+    message:
+      "Approve the provider assignments, path leases, critical cross-provider
+      lanes, and every explicit deviation from the effort target."
+    show_file:
+      ".specify/workflows/runs/{{ context.run_id }}/evidence/routing.json"
+    options: [approve, reject]
+    verdict_input: routing_verdict
+    on_reject: abort
+
+  - id: prepare-wave-execution
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/execution.mjs" prepare "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: execute-routed-waves
+    type: do-while
+    condition: >-
+      {{ steps.verify-execution-wave.output.stdout | from_json }}
+    max_iterations: 64
+    steps:
+      - id: execute-active-wave
+        command: speckit.boundedrelay.execute-wave
+        integration: claude
+        input:
+          args:
+            "run_id={{ context.run_id }} mode=wave-ordered; execute only the
+            active wave in execution.json, preserve one writer, and stop before
+            committing"
+
+      - id: approve-wave-checkpoint
+        type: gate
+        message:
+          "Inspect the active wave, its provider evidence, changed paths, and
+          checks. If it wrote code, create or authorize exactly one clean
+          non-merge commit for that writer lease. Every check receipt must name
+          the exact tested tree matching that commit. Reject aborts the run so
+          revised routing starts from fresh evidence."
+        show_file:
+          ".specify/workflows/runs/{{ context.run_id }}/evidence/execution.json"
+        options: [approve, reject]
+        verdict_input: wave_checkpoint_verdict
+        on_reject: abort
+
+      - id: verify-execution-wave
+        type: shell
+        run: >-
+          node "$SPECKIT_WORKFLOW_DIR/scripts/execution.mjs" verify-wave "{{
+          context.run_id }}"
+        timeout: 30
+
+  - id: verify-wave-execution
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/execution.mjs" verify "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: approve-implementation-checkpoint
+    type: gate
+    message:
+      "Run repository checks and create or authorize a clean committed
+      implementation review checkpoint. Strict codex_worker_sdd_review rejects
+      dirty or unpinned state; the workflow never commits automatically."
+    show_file: "{{ inputs.feature_directory }}/tasks.md"
+    options: [approve, reject]
+    verdict_input: implementation_checkpoint_verdict
+    on_reject: abort
+
+  - id: prepare-implementation-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs" prepare "{{
+      context.run_id }}" implementation
+    timeout: 30
+
+  - id: freeze-claude-implementation-review
+    command: speckit.boundedrelay.implementation-review
+    integration: claude
+    input:
+      args:
+        "run_id={{ context.run_id }} phase=implementation stage=claude; freeze
+        only the Claude host findings and do not start Codex"
+
+  - id: verify-frozen-claude-implementation-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs"
+      verify-claude "{{ context.run_id }}" implementation
+    timeout: 30
+
+  - id: independent-codex-implementation-review
+    command: speckit.boundedrelay.implementation-review
+    integration: claude
+    input:
+      args:
+        "run_id={{ context.run_id }} phase=implementation stage=codex
+        tool=codex_worker_sdd_review mode=strict; preserve the verified frozen
+        Claude evidence and keep its findings out of Codex focus"
+
+  - id: verify-implementation-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs" verify "{{
+      context.run_id }}" implementation
+    timeout: 30
+
+  - id: approve-implementation-review
+    type: gate
+    message:
+      "Approve only after both implementation reviews approve and relevant
+      checks pass."
+    show_file:
+      ".specify/workflows/runs/{{ context.run_id
+      }}/evidence/implementation-review.json"
+    options: [approve, reject]
+    verdict_input: implementation_review_verdict
+    on_reject: abort
+
+  - id: converge
+    command: speckit.converge
+    integration: claude
+    input:
+      args:
+        "Audit every artifact-to-implementation gap for {{ inputs.scope }}. If
+        work remains, append explicit tasks only; do not implement them in this
+        run. New tasks require a fresh approved routing and wave-execution run."
+
+  - id: verify-no-unrouted-convergence-work
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/convergence.mjs" verify-no-new-work
+      "{{ context.run_id }}"
+    timeout: 30
+
+  - id: prepare-convergence-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs" prepare "{{
+      context.run_id }}" convergence
+    timeout: 30
+
+  - id: freeze-claude-convergence-review
+    command: speckit.boundedrelay.implementation-review
+    integration: claude
+    input:
+      args:
+        "run_id={{ context.run_id }} phase=convergence stage=claude; freeze only
+        the Claude host findings and do not start Codex"
+
+  - id: verify-frozen-claude-convergence-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs"
+      verify-claude "{{ context.run_id }}" convergence
+    timeout: 30
+
+  - id: independent-codex-convergence-review
+    command: speckit.boundedrelay.implementation-review
+    integration: claude
+    input:
+      args:
+        "run_id={{ context.run_id }} phase=convergence stage=codex
+        tool=codex_worker_sdd_review mode=strict; preserve the verified frozen
+        Claude evidence and keep its findings out of Codex focus"
+
+  - id: verify-convergence-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs" verify "{{
+      context.run_id }}" convergence
+    timeout: 30
+
+  - id: approve-convergence-review
+    type: gate
+    message:
+      "Approve only after convergence tasks and both fresh reviews are complete."
+    show_file:
+      ".specify/workflows/runs/{{ context.run_id
+      }}/evidence/convergence-review.json"
+    options: [approve, reject]
+    verdict_input: convergence_review_verdict
+    on_reject: abort
+
+  - id: final-converge
+    command: speckit.converge
+    integration: claude
+    input:
+      args: "Perform the final artifact-to-implementation convergence audit"
+
+  - id: verify-final-convergence-did-not-stale-review
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/implementation-review.mjs" verify "{{
+      context.run_id }}" convergence
+    timeout: 30
+
+  - id: assemble-proof-pack
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/proof-pack.mjs" assemble "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: verify-proof-pack
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/proof-pack.mjs" verify "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: approve-delivery
+    type: gate
+    message:
+      "Approve delivery only when no unfinished task, unresolved high-severity
+      finding, or unexplained failing gate remains."
+    show_file:
+      ".specify/workflows/runs/{{ context.run_id }}/evidence/proof-pack.json"
+    options: [approve, reject]
+    verdict_input: delivery_verdict
+    on_reject: abort
+
+  - id: prepare-handoff-context
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/handoff.mjs" prepare "{{
+      context.run_id }}"
+    timeout: 30
+
+  - id: handoff
+    command: speckit.boundedrelay.handoff
+    integration: claude
+    input:
+      args:
+        "run_id={{ context.run_id }} feature_directory={{
+        inputs.feature_directory }} scope={{ inputs.scope }}; write only the
+        run-local handoff-draft.md and copy the exact marker from
+        handoff-context.json"
+
+  - id: verify-handoff-binding
+    type: shell
+    run: >-
+      node "$SPECKIT_WORKFLOW_DIR/scripts/handoff.mjs" verify "{{ context.run_id
+      }}"
+    timeout: 30
+
+  - id: approve-handoff
+    type: gate
+    message:
+      "Approve the exact shared handoff. This workflow never commits, pushes,
+      publishes, or deploys."
+    show_file: ".specify/agents/HANDOFF.md"
+    options: [approve, reject]
+    verdict_input: handoff_verdict
+    on_reject: abort

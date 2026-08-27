@@ -4,6 +4,16 @@ import type { ResolvedJobRequest } from "../core/types.js";
 
 export function buildWorkerPrompt(request: ResolvedJobRequest): string {
   const contextPath = relative(request.repositoryRoot, request.cwd) || ".";
+  const delegationConstraint =
+    request.reasoningEffort === "ultra"
+      ? [
+          "- Codex-managed internal subagents are permitted only inside this Codex invocation and only within the same sandbox, authority, and path limits.",
+          "- Internal subagents must remain read-only; the parent Codex worker is the sole writer for an isolated proposal.",
+          "- Never invoke Claude, BoundedRelay, another external agent runtime, or a recursive cross-provider delegation.",
+        ]
+      : [
+          "- Do not invoke Claude, BoundedRelay, delegate, spawn sub-agents, or create recursive agent work.",
+        ];
   const authority =
     request.mode === "analyze"
       ? [
@@ -23,7 +33,7 @@ export function buildWorkerPrompt(request: ResolvedJobRequest): string {
     `Execution workspace: ${request.executionRoot}`,
     `Requested context within the repository: ${contextPath}`,
     "Hard constraints:",
-    "- Do not invoke Claude, delegate, spawn sub-agents, or create recursive agent work.",
+    ...delegationConstraint,
     "- Do not commit, push, create or switch branches, open pull requests, deploy, publish, or modify remote systems.",
     "- Do not request broader permissions. If the sandbox blocks required work, report the exact blocker.",
     "- Preserve unrelated working-tree changes and never use destructive Git commands.",

@@ -1,0 +1,10 @@
+{
+  "name": "boundedrelay",
+  "version": "0.1.0",
+  "description": "Optional Claude Code coordinator skills for BoundedRelay adaptive Spec Kit delivery.",
+  "author": {
+    "name": "BoundedRelay contributors"
+  },
+  "license": "MIT",
+  "keywords": ["boundedrelay", "codex", "spec-kit", "sdd", "review"]
+}

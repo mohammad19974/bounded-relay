@@ -47,14 +47,19 @@ describe("repository documentation contract", () => {
   });
 
   test("keeps checked-in JSON examples and schemas parseable", async () => {
-    const roots = ["schemas", "examples"];
+    const roots = [
+      "schemas",
+      "examples",
+      "integrations/spec-kit/workflow/schemas",
+    ];
     const invalid: string[] = [];
 
     for (const root of roots) {
       const files = await collectFiles(resolve(projectRoot, root), ".json");
       for (const file of files) {
         try {
-          JSON.parse(await readFile(file, "utf8"));
+          const document = JSON.parse(await readFile(file, "utf8")) as unknown;
+          assertLocalJsonReferences(document, document);
         } catch {
           invalid.push(relativeToRoot(file));
         }
@@ -64,6 +69,37 @@ describe("repository documentation contract", () => {
     expect(invalid).toEqual([]);
   });
 });
+
+function assertLocalJsonReferences(document: unknown, value: unknown): void {
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  if (
+    !Array.isArray(value) &&
+    "$ref" in value &&
+    typeof value.$ref === "string" &&
+    value.$ref.startsWith("#/") &&
+    resolveJsonPointer(document, value.$ref) === undefined
+  ) {
+    throw new Error(`unresolved local JSON reference ${value.$ref}`);
+  }
+  for (const entry of Object.values(value)) {
+    assertLocalJsonReferences(document, entry);
+  }
+}
+
+function resolveJsonPointer(document: unknown, pointer: string): unknown {
+  return pointer
+    .slice(2)
+    .split("/")
+    .reduce<unknown>((current, segment) => {
+      if (typeof current !== "object" || current === null) {
+        return undefined;
+      }
+      const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+      return (current as Readonly<Record<string, unknown>>)[key];
+    }, document);
+}
 
 async function collectFiles(
   root: string,

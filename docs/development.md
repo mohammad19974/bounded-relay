@@ -45,6 +45,7 @@ src/
 ├── core/                     # Job state, leases, public types, errors
 ├── mcp/                      # Tool schemas and stdio transport
 ├── runtime/                  # Codex, Git, workspace, and proposal adapters
+├── sdd/                      # Adaptive routing, revision seals, evidence, and gates
 └── security/                 # Paths, executables, environment, state, prompts
 ```
 
@@ -58,7 +59,8 @@ own subprocess details.
 
 Cover configuration parsing, path containment, executable resolution,
 environment allowlisting, prompt authority, JSONL decoding, event normalization,
-error mapping, idempotency, job transitions, and history eviction.
+error mapping, idempotency, job transitions, history eviction, canonical SDD
+routing, revision seals, evidence validation, freshness, and gate evaluation.
 
 ### Integration tests
 
@@ -77,6 +79,20 @@ Proposal integration coverage should prove:
 - binary patch bytes and digest are stable;
 - clone and lease cleanup occurs on success, failure, cancellation, and timeout.
 
+SDD integration coverage should prove:
+
+- semantically identical task graphs produce the same v2 fingerprint and
+  reasons;
+- hard eligibility and task-kind fit win before neutral share metadata;
+- preference affects only exact base-fit ties, and risk does not bias a lane;
+- true neutral odd ties prefer Codex and execution waves have one writer;
+- strict review rejects dirty, unsafe, malformed, fenced, mismatched, and stale
+  evidence;
+- host findings are frozen before Codex and absent from the generated Codex
+  prompt;
+- draft review never produces a ready gate;
+- integration fixtures need no Claude CLI, provider credentials, or paid call.
+
 ### MCP contract tests
 
 Start the built stdio executable through an MCP client transport and verify:
@@ -90,10 +106,14 @@ Start the built stdio executable through an MCP client transport and verify:
   polling;
 - list results use the documented `{ "jobs": [...] }` envelope;
 - result omits patch by default and includes it only when requested;
+- SDD route input/output and fingerprints match the JSON contracts;
+- specialized review uses status/result lifecycle and returns a validated gate,
+  while generic analysis cannot satisfy it;
 - stdout contains protocol traffic only.
 
 Documentation contract tests also keep local links, JSON examples, package
-identity, and generated brand assets from drifting before publication.
+identity, generated brand assets, and packaged integration manifests from
+drifting before publication.
 
 ### Real-provider smoke tests
 

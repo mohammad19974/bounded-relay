@@ -16,6 +16,7 @@ export const JOB_ACTIVITIES = [
   "queued",
   "starting",
   "preparing_workspace",
+  "preparing_review_workspace",
   "codex_started",
   "reasoning",
   "planning",
@@ -28,6 +29,7 @@ export const JOB_ACTIVITIES = [
   "composing_response",
   "response_ready",
   "validating_proposal",
+  "validating_review",
   "completed",
   "failed",
   "cancelled",
@@ -41,6 +43,7 @@ export const REASONING_EFFORTS = [
   "high",
   "xhigh",
   "max",
+  "ultra",
 ] as const;
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
@@ -70,6 +73,7 @@ export interface ResolvedJobRequest {
   readonly reasoningEffort?: ReasoningEffort;
   readonly timeoutMs: number;
   readonly idempotencyKey?: string;
+  readonly sddReview?: PreparedSddReview;
 }
 
 export interface UsageSummary {
@@ -104,6 +108,12 @@ export interface PublicJobSnapshot {
   readonly model?: string;
   readonly reasoningEffort?: ReasoningEffort;
   readonly idempotencyKey?: string;
+  readonly sddReview?: {
+    readonly phase: PreparedSddReview["phase"];
+    readonly mode: PreparedSddReview["seal"]["mode"];
+    readonly sealId: string;
+    readonly hostEvidenceDigest: string;
+  };
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
@@ -126,6 +136,7 @@ export interface JobResult {
   readonly job: PublicJobSnapshot;
   readonly finalMessage?: string;
   readonly proposal?: ProposalArtifact;
+  readonly review?: SddReviewArtifact;
 }
 
 export interface ProposalArtifact {
@@ -195,3 +206,7 @@ export interface WorkspaceSummary {
   readonly proposalReady: boolean;
   readonly proposalBlockers: readonly string[];
 }
+import type {
+  PreparedSddReview,
+  SddReviewArtifact,
+} from "../sdd/review-job.js";

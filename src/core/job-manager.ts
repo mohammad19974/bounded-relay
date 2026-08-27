@@ -24,6 +24,16 @@ import type {
   PreparedProposal,
   ProposalWorkspace,
 } from "../runtime/proposal-workspace.js";
+import type {
+  PreparedReviewWorkspace,
+  ReviewWorkspace,
+} from "../runtime/review-workspace.js";
+import {
+  validateSddReviewInput,
+  type SddReviewArtifact,
+  type SddReviewService,
+  type StartSddReviewInput,
+} from "../sdd/review-job.js";
 
 interface InternalJob {
   readonly id: string;
@@ -39,6 +49,7 @@ interface InternalJob {
   usage?: UsageSummary;
   finalMessage?: string;
   proposal?: ProposalArtifact;
+  review?: SddReviewArtifact;
   resultTruncated: boolean;
   failure?: WorkerFailure;
   cancellationRequested: boolean;
@@ -54,7 +65,9 @@ export class JobManager {
   readonly #config: WorkerConfig;
   readonly #runtime: WorkerRuntime;
   readonly #proposalWorkspace: ProposalWorkspace;
+  readonly #reviewWorkspace: ReviewWorkspace;
   readonly #leases: LeaseManager;
+  readonly #reviews: SddReviewService;
   readonly #jobs = new Map<string, InternalJob>();
   readonly #idempotency = new Map<string, string>();
   readonly #queue: string[] = [];
@@ -66,17 +79,22 @@ export class JobManager {
     readonly config: WorkerConfig;
     readonly runtime: WorkerRuntime;
     readonly proposalWorkspace: ProposalWorkspace;
+    readonly reviewWorkspace: ReviewWorkspace;
     readonly leases: LeaseManager;
+    readonly reviews: SddReviewService;
   }) {
     this.#config = dependencies.config;
     this.#runtime = dependencies.runtime;
     this.#proposalWorkspace = dependencies.proposalWorkspace;
+    this.#reviewWorkspace = dependencies.reviewWorkspace;
     this.#leases = dependencies.leases;
+    this.#reviews = dependencies.reviews;
   }
 
   public async initialize(): Promise<void> {
     await Promise.all([
       this.#proposalWorkspace.initialize(),
+      this.#reviewWorkspace.initialize(),
       this.#leases.initialize(),
     ]);
   }
@@ -85,6 +103,46 @@ export class JobManager {
   public async submit(input: unknown): Promise<PublicJobSnapshot> {
     assertStartJobInput(input);
     const request = await this.#resolveRequest(input);
+    return this.#enqueue(request);
+  }
+
+  public async submitReview(
+    input: StartSddReviewInput,
+  ): Promise<PublicJobSnapshot>;
+  public async submitReview(input: unknown): Promise<PublicJobSnapshot> {
+    const validated = validateSddReviewInput(input, this.#config);
+    const baseRequest = await this.#resolveRequest({
+      task: "Prepare an independent structured SDD review",
+      mode: "analyze",
+      ...(validated.cwd === undefined ? {} : { cwd: validated.cwd }),
+      ...(validated.model === undefined ? {} : { model: validated.model }),
+      ...(validated.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: validated.reasoningEffort }),
+      ...(validated.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: validated.timeoutMs }),
+      ...(validated.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: validated.idempotencyKey }),
+    });
+    const review = await this.#reviews.prepare(
+      validated,
+      baseRequest.repositoryRoot,
+    );
+    const request: ResolvedJobRequest = {
+      ...baseRequest,
+      task: review.task,
+      taskHash: createHash("sha256").update(review.task).digest("hex"),
+      ...(review.seal.revision === null
+        ? {}
+        : { expectedRevision: review.seal.revision }),
+      sddReview: review,
+    };
+    return this.#enqueue(request);
+  }
+
+  #enqueue(request: ResolvedJobRequest): PublicJobSnapshot {
     const fingerprint = requestFingerprint(request);
 
     if (request.idempotencyKey !== undefined) {
@@ -178,6 +236,7 @@ export class JobManager {
         ? {}
         : { finalMessage: job.finalMessage }),
       ...(job.proposal === undefined ? {} : { proposal: job.proposal }),
+      ...(job.review === undefined ? {} : { review: job.review }),
     };
   }
 
@@ -389,8 +448,10 @@ export class JobManager {
 
     let lease: LeaseHandle | undefined;
     let prepared: PreparedProposal | undefined;
+    let preparedReview: PreparedReviewWorkspace | undefined;
     let runtimeResult: RuntimeResult | undefined;
     let proposal: ProposalArtifact | undefined;
+    let review: SddReviewArtifact | undefined;
     let failure: WorkerFailure | undefined;
 
     try {
@@ -401,6 +462,11 @@ export class JobManager {
         lease = await this.#leases.acquire(job.request.repositoryRoot, job.id);
         prepared = await this.#proposalWorkspace.prepare(job.request);
         runtimeRequest = prepared.request;
+      } else if (job.request.sddReview?.seal.mode === "strict") {
+        this.#setActivity(job, "starting", "preparing_review_workspace");
+        this.#touch(job);
+        preparedReview = await this.#reviewWorkspace.prepare(job.request);
+        runtimeRequest = preparedReview.request;
       }
 
       if (job.cancellationRequested) {
@@ -421,6 +487,20 @@ export class JobManager {
         this.#touch(job);
         proposal = await prepared.finalize();
       }
+      if (
+        runtimeResult.outcome === "completed" &&
+        job.request.sddReview !== undefined &&
+        runtimeResult.finalMessage !== undefined
+      ) {
+        this.#setActivity(job, "finalizing", "validating_review");
+        this.#touch(job);
+        review = await this.#reviews.finalize(
+          job.request.sddReview,
+          runtimeResult.finalMessage,
+          job.request.model,
+          job.request.reasoningEffort,
+        );
+      }
     } catch (error) {
       const workerError = toWorkerError(error);
       failure = { code: workerError.code, message: workerError.message };
@@ -428,6 +508,12 @@ export class JobManager {
 
     try {
       await prepared?.cleanup();
+    } catch (error) {
+      const workerError = toWorkerError(error);
+      failure ??= { code: workerError.code, message: workerError.message };
+    }
+    try {
+      await preparedReview?.cleanup();
     } catch (error) {
       const workerError = toWorkerError(error);
       failure ??= { code: workerError.code, message: workerError.message };
@@ -447,7 +533,10 @@ export class JobManager {
       this.#markFailed(job, failure);
     } else if (runtimeResult?.outcome === "completed") {
       job.status = "completed";
-      if (runtimeResult.finalMessage !== undefined) {
+      if (review !== undefined) {
+        job.review = review;
+        job.finalMessage = review.codexEvidence.summary;
+      } else if (runtimeResult.finalMessage !== undefined) {
         job.finalMessage = runtimeResult.finalMessage;
       }
       if (proposal !== undefined) {
@@ -604,6 +693,16 @@ export class JobManager {
       ...(job.request.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: job.request.idempotencyKey }),
+      ...(job.request.sddReview === undefined
+        ? {}
+        : {
+            sddReview: {
+              phase: job.request.sddReview.phase,
+              mode: job.request.sddReview.seal.mode,
+              sealId: job.request.sddReview.seal.sealId,
+              hostEvidenceDigest: job.request.sddReview.hostEvidenceDigest,
+            },
+          }),
       createdAt: job.createdAt,
       ...(job.startedAt === undefined ? {} : { startedAt: job.startedAt }),
       ...(job.completedAt === undefined
@@ -666,6 +765,14 @@ function requestFingerprint(request: ResolvedJobRequest): string {
         model: request.model ?? null,
         reasoningEffort: request.reasoningEffort ?? null,
         timeoutMs: request.timeoutMs,
+        sddReview:
+          request.sddReview === undefined
+            ? null
+            : {
+                phase: request.sddReview.phase,
+                sealId: request.sddReview.seal.sealId,
+                hostEvidenceDigest: request.sddReview.hostEvidenceDigest,
+              },
       }),
     )
     .digest("hex");
@@ -681,6 +788,7 @@ const ACTIVITY_LABELS: Readonly<Record<JobActivity, string>> = {
   queued: "Waiting for an available worker slot",
   starting: "Starting the bounded job",
   preparing_workspace: "Preparing the isolated proposal workspace",
+  preparing_review_workspace: "Preparing the revision-pinned review workspace",
   codex_started: "Codex started",
   reasoning: "Codex is reasoning",
   planning: "Codex is updating its plan",
@@ -693,6 +801,7 @@ const ACTIVITY_LABELS: Readonly<Record<JobActivity, string>> = {
   composing_response: "Codex is composing the response",
   response_ready: "Codex produced a response",
   validating_proposal: "Validating the isolated patch",
+  validating_review: "Validating the structured independent review",
   completed: "Job completed",
   failed: "Job failed",
   cancelled: "Job cancelled",

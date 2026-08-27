@@ -29,7 +29,7 @@ Use `boundedrelay config` to print effective non-secret configuration and
 | `CCW_MAX_TIMEOUT_MS`     | `1800000`                                                   | integer `1000..7200000`                    | Highest timeout accepted from a caller. Must be at least the default timeout.                                                        |
 | `CCW_CANCEL_GRACE_MS`    | `3000`                                                      | integer `100..30000`                       | Grace between process-tree termination and forced kill.                                                                              |
 | `CCW_GIT_TIMEOUT_MS`     | `30000`                                                     | integer `1000..300000`                     | Timeout for each worker-owned Git operation.                                                                                         |
-| `CCW_STATE_DIR`          | `$XDG_RUNTIME_DIR/boundedrelay-<uid>` or OS temp equivalent | specific directory path                    | Transient proposal clones and lease metadata only. Not a job database.                                                               |
+| `CCW_STATE_DIR`          | `$XDG_RUNTIME_DIR/boundedrelay-<uid>` or OS temp equivalent | specific directory path                    | Transient proposal/strict-review clones and proposal lease metadata only. Not a job database.                                        |
 
 Boolean values accept `1`, `true`, `yes`, `on`, `0`, `false`, `no`, and `off`,
 case-insensitively.
@@ -63,8 +63,9 @@ Do not use `/`, `C:\`, a home directory, or a broad documents directory.
 
 ## Model policy
 
-The worker does not rank or route models. A job may omit `model`, in which case
-Codex chooses its effective default. The worker invokes Codex with
+The worker does not rank models. The deterministic SDD router assigns task
+lanes, not model identifiers. A Codex job may omit `model`, in which case Codex
+chooses its effective default. The worker invokes Codex with
 `--ignore-user-config`, so user configuration is not loaded for the run;
 authentication still uses the normal Codex home.
 
@@ -85,9 +86,30 @@ An unlisted model fails before job creation. Model availability, quality,
 pricing, and account access remain Codex/provider concerns. Do not publish a
 hard-coded “best model” table as worker policy.
 
-Allowed reasoning efforts are `low`, `medium`, `high`, `xhigh`, and `max`.
-Availability can depend on the selected Codex/model version; a rejected value or
-unsupported combination becomes a failed job rather than a silent downgrade.
+Allowed reasoning efforts are `low`, `medium`, `high`, `xhigh`, `max`, and
+`ultra`. Availability can depend on the selected Codex/model version; a rejected
+value or unsupported combination becomes a failed job rather than a silent
+downgrade.
+
+For example, the optional Adaptive SDD pack can require this explicit critical
+Codex profile:
+
+```bash
+CCW_ALLOWED_MODELS=gpt-5.6-sol
+```
+
+The review/proposal request must also specify `model: "gpt-5.6-sol"` and
+`reasoningEffort: "ultra"`. The allowlist does not select that profile
+automatically and does not prove account availability. There is no fallback.
+
+`claude-host` is not configured here. It always means the model already selected
+by the current Claude Code session. BoundedRelay has no Claude executable,
+Anthropic API setting, or host-model override.
+
+With `ultra`, the worker prompt permits Codex-managed read-only internal
+subagents inside the same invocation, sandbox, authority, and path boundary. The
+parent Codex invocation remains the only proposal writer. Cross-provider or
+nested BoundedRelay delegation remains prohibited.
 
 ## Authentication and child environment
 
@@ -149,10 +171,10 @@ worker creates it with owner-only permissions where supported and refuses a
 filesystem root, home directory, non-directory, symlink, or directory owned by
 another user.
 
-The directory contains transient clones and proposal locks. Jobs, prompts,
-results, and idempotency mappings are not persisted. A process crash can leave
-transient entries; inspect the exact configured directory and ensure no worker
-is active before any manual cleanup.
+The directory contains transient proposal clones, detached strict-review clones,
+and proposal locks. Jobs, prompts, results, and idempotency mappings are not
+persisted. A process crash can leave transient entries; inspect the exact
+configured directory and ensure no worker is active before any manual cleanup.
 
 ## Shared `.mcp.json`
 

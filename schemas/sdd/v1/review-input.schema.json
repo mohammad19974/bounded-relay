@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/sdd/v1/review-input.schema.json",
+  "title": "BoundedRelay SDD review input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["phase", "mode", "artifactPaths", "hostReview"],
+  "properties": {
+    "phase": { "enum": ["plan", "artifacts", "implementation", "convergence"] },
+    "mode": { "enum": ["strict", "draft"] },
+    "artifactPaths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+    },
+    "expectedRevision": {
+      "type": "string",
+      "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"
+    },
+    "baseRevision": {
+      "type": "string",
+      "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"
+    },
+    "hostReview": { "$ref": "#/$defs/hostReview" },
+    "focus": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "cwd": { "type": "string", "maxLength": 4096 },
+    "model": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "reasoningEffort": {
+      "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
+    },
+    "timeoutMs": { "type": "integer", "minimum": 1000 },
+    "idempotencyKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    }
+  },
+  "$defs": {
+    "hostReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewId", "verdict", "summary", "findings"],
+      "properties": {
+        "reviewId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "verdict": { "enum": ["approved", "changes-requested"] },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "findings": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "./codex-review-output.schema.json#/$defs/finding"
+          }
+        },
+        "declaredModelLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "verdict": { "const": "changes-requested" } }
+          },
+          "then": { "properties": { "findings": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "verdict": { "const": "approved" } } },
+          "then": {
+            "properties": {
+              "findings": {
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "required": ["severity"],
+                    "properties": {
+                      "severity": { "enum": ["critical", "high"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,48 @@
+schema_version: "1.0"
+
+extension:
+  id: boundedrelay-sdd
+  name: "BoundedRelay Adaptive SDD"
+  version: "0.1.0"
+  description:
+    "Quality-first routing, wave-ordered execution, frozen dual review, and
+    evidence-first handoff"
+  author: boundedrelay-contributors
+  license: MIT
+  effect: read-write
+
+requires:
+  speckit_version: ">=1.0.1"
+
+provides:
+  commands:
+    - name: speckit.boundedrelay.plan-review
+      file: commands/speckit.boundedrelay.plan-review.md
+      description:
+        "Freeze Claude host findings before an independent BoundedRelay Codex
+        plan review"
+    - name: speckit.boundedrelay.route
+      file: commands/speckit.boundedrelay.route.md
+      description:
+        "Route approved tasks by estimated effort with a configurable provider
+        target"
+    - name: speckit.boundedrelay.execute-wave
+      file: commands/speckit.boundedrelay.execute-wave.md
+      description:
+        "Execute one dependency-safe routed wave with a single integration
+        writer"
+    - name: speckit.boundedrelay.implementation-review
+      file: commands/speckit.boundedrelay.implementation-review.md
+      description:
+        "Run frozen Claude host and independent Codex implementation reviews"
+    - name: speckit.boundedrelay.handoff
+      file: commands/speckit.boundedrelay.handoff.md
+      description: "Write an exact provider-aware continuation handoff"
+
+tags:
+  - boundedrelay
+  - claude-code
+  - codex
+  - orchestration
+  - review
+  - routing

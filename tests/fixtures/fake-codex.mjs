@@ -32,7 +32,7 @@ if (args[0] === "exec" && args[1] === "--help") {
   process.stdout.write(
     process.env.FAKE_INCOMPATIBLE === "1"
       ? "usage: codex exec\n"
-      : "--json --ephemeral --ignore-user-config --ignore-rules --color\n",
+      : "--json --ephemeral --ignore-user-config --ignore-rules --color --output-schema\n",
   );
   process.exit(0);
 }
@@ -121,6 +121,29 @@ process.stdin.on("end", () => {
       process.stderr.write("private\nerror\tmessage\n");
       process.exitCode = 7;
       break;
+    case "sdd-review-approved": {
+      const decision = JSON.stringify({
+        schemaVersion: 1,
+        verdict: "approved",
+        summary: "The independently reviewed artifacts satisfy the gate.",
+        findings: [],
+      });
+      emit({ type: "thread.started", thread_id: "thread-sdd-review" });
+      emit({
+        type: "item.completed",
+        item: { type: "agent_message", text: decision },
+      });
+      emit({
+        type: "turn.completed",
+        usage: {
+          input_tokens: 8,
+          cached_input_tokens: 2,
+          output_tokens: 4,
+          reasoning_output_tokens: 1,
+        },
+      });
+      break;
+    }
     default:
       process.stdout.write(
         '{"type":"thread.started","thread_id":"thread-test"}\r\n',

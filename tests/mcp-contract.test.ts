@@ -28,6 +28,8 @@ describe("MCP stdio contract", () => {
       expect(names).toEqual([
         "codex_worker_capabilities",
         "codex_worker_workspace",
+        "codex_worker_sdd_route",
+        "codex_worker_sdd_review",
         "codex_worker_analyze",
         "codex_worker_status",
         "codex_worker_result",
@@ -87,6 +89,29 @@ describe("MCP stdio contract", () => {
       expect(Number.isInteger(submittedProgress.sinceLastUpdateMs)).toBe(true);
       expect(typeof submittedSnapshot.id).toBe("string");
 
+      const routed = await testClient.client.callTool({
+        name: "codex_worker_sdd_route",
+        arguments: {
+          tasks: ["a", "b", "c"].map((id) => ({
+            id,
+            effortPoints: 1,
+            risk: "medium",
+            authority: "read-only",
+            kind: "review",
+          })),
+        },
+      });
+      expect(routed.isError).not.toBe(true);
+      expect(routed.structuredContent).toMatchObject({
+        schemaVersion: 1,
+        routingPolicyVersion: "sdd-routing-v2",
+        fitPolicyVersion: "sdd-task-fit-v1",
+        balance: {
+          neutralCodexShareBps: 5_000,
+          taskCount: { codex: 2, "claude-host": 1 },
+        },
+      });
+
       const listed = await testClient.client.callTool({
         name: "codex_worker_list",
         arguments: { limit: 1 },
@@ -104,6 +129,68 @@ describe("MCP stdio contract", () => {
       expect(typeof asRecord(matchingJob?.progress).activityLabel).toBe(
         "string",
       );
+    } finally {
+      await testClient.close();
+    }
+  }, 20_000);
+
+  it("returns a current strict dual-review artifact from the specialized review tool", async () => {
+    const testClient = await startTestClient(false, "sdd-review-approved");
+    try {
+      const submitted = await testClient.client.callTool({
+        name: "codex_worker_sdd_review",
+        arguments: {
+          phase: "plan",
+          mode: "strict",
+          cwd: testClient.repository.root,
+          artifactPaths: ["README.md"],
+          expectedRevision: testClient.repository.revision,
+          hostReview: {
+            reviewId: "claude-plan-review",
+            verdict: "approved",
+            summary: "The host review approves the frozen plan artifact.",
+            findings: [],
+          },
+        },
+      });
+      expect(submitted.isError).not.toBe(true);
+      expect(submitted.structuredContent).toMatchObject({
+        mode: "analyze",
+        expectedRevision: testClient.repository.revision,
+        sddReview: { phase: "plan", mode: "strict" },
+      });
+      const jobId = asRecord(submitted.structuredContent).id;
+      expect(jobId).toEqual(expect.any(String));
+      await waitForMcpTerminal(testClient.client, String(jobId));
+
+      const result = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ready: true,
+        finalMessage: "The independently reviewed artifacts satisfy the gate.",
+        review: {
+          schemaVersion: 1,
+          phase: "plan",
+          hostEvidence: {
+            reviewer: {
+              lane: "claude-host",
+              modelSource: "host-selected",
+            },
+          },
+          codexEvidence: {
+            execution: {
+              fresh: true,
+              sandbox: "read-only",
+              approvalPolicy: "never",
+              ephemeral: true,
+            },
+          },
+          gate: { passed: true, status: "ready" },
+        },
+      });
     } finally {
       await testClient.close();
     }

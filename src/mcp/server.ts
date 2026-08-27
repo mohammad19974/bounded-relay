@@ -4,8 +4,17 @@ import { z } from "zod";
 
 import type { JobResult } from "../core/types.js";
 import { JOB_STATUSES, REASONING_EFFORTS } from "../core/types.js";
-import { toWorkerError } from "../core/errors.js";
+import { ERROR_CODES, WorkerError, toWorkerError } from "../core/errors.js";
 import type { WorkerApplication } from "../worker-application.js";
+import {
+  ROUTING_LANES,
+  TASK_AUTHORITIES,
+  TASK_KINDS,
+  TASK_RISKS,
+  SddRoutingError,
+  routeSddTasks,
+} from "../sdd/routing/index.js";
+import { REVIEW_PHASES } from "../sdd/review/index.js";
 
 export interface RunningMcpServer {
   close(): Promise<void>;
@@ -18,12 +27,7 @@ export async function startMcpServer(
     name: "boundedrelay",
     version: application.config.version,
   });
-  const commonJobShape = {
-    task: z
-      .string()
-      .min(1)
-      .max(application.config.maxTaskChars)
-      .describe("Bounded objective for the Codex worker"),
+  const runtimeJobShape = {
     cwd: z
       .string()
       .max(4_096)
@@ -42,6 +46,14 @@ export async function startMcpServer(
       .max(application.config.maxTimeoutMs)
       .optional(),
     idempotencyKey: z.string().min(1).max(128).optional(),
+  };
+  const commonJobShape = {
+    task: z
+      .string()
+      .min(1)
+      .max(application.config.maxTaskChars)
+      .describe("Bounded objective for the Codex worker"),
+    ...runtimeJobShape,
   };
 
   server.registerTool(
@@ -70,6 +82,8 @@ export async function startMcpServer(
           tools: [
             "codex_worker_capabilities",
             "codex_worker_workspace",
+            "codex_worker_sdd_route",
+            "codex_worker_sdd_review",
             "codex_worker_analyze",
             ...(application.config.enableProposals
               ? ["codex_worker_propose"]
@@ -101,6 +115,185 @@ export async function startMcpServer(
     },
     async ({ cwd }) =>
       await safeResult(async () => await application.workspaces.inspect(cwd)),
+  );
+
+  server.registerTool(
+    "codex_worker_sdd_route",
+    {
+      title: "Route approved SDD tasks",
+      description:
+        "Deterministically route a bounded task DAG by hard eligibility and versioned task fit, using the configured Codex effort share only for fit-neutral tasks. No model is called and no file is changed.",
+      inputSchema: {
+        tasks: z
+          .array(
+            z
+              .object({
+                id: z.string().min(1).max(64),
+                effortPoints: z.number().int().min(1).max(100),
+                risk: z.enum(TASK_RISKS),
+                authority: z.enum(TASK_AUTHORITIES),
+                kind: z.enum(TASK_KINDS),
+                dependencies: z
+                  .array(z.string().min(1).max(64))
+                  .max(64)
+                  .optional(),
+                writeScopes: z
+                  .array(z.string().min(1).max(4_096))
+                  .max(64)
+                  .optional(),
+                eligibleLanes: z
+                  .array(z.enum(ROUTING_LANES))
+                  .min(1)
+                  .max(2)
+                  .optional(),
+                preferredLane: z.enum(ROUTING_LANES).optional(),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(64),
+        neutralCodexShareBps: z.number().int().min(0).max(10_000).optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) =>
+      await safeResult(async () => {
+        try {
+          return routeSddTasks({
+            tasks: input.tasks.map((task) => ({
+              id: task.id,
+              effortPoints: task.effortPoints,
+              risk: task.risk,
+              authority: task.authority,
+              kind: task.kind,
+              ...(task.dependencies === undefined
+                ? {}
+                : { dependencies: task.dependencies }),
+              ...(task.writeScopes === undefined
+                ? {}
+                : { writeScopes: task.writeScopes }),
+              ...(task.eligibleLanes === undefined
+                ? {}
+                : { eligibleLanes: task.eligibleLanes }),
+              ...(task.preferredLane === undefined
+                ? {}
+                : { preferredLane: task.preferredLane }),
+            })),
+            ...(input.neutralCodexShareBps === undefined
+              ? {}
+              : { neutralCodexShareBps: input.neutralCodexShareBps }),
+          });
+        } catch (error) {
+          if (error instanceof SddRoutingError) {
+            throw new WorkerError(ERROR_CODES.INVALID_REQUEST, error.message);
+          }
+          throw error;
+        }
+      }),
+  );
+
+  server.registerTool(
+    "codex_worker_sdd_review",
+    {
+      title: "Start an independent structured SDD review",
+      description:
+        "Freeze Claude host evidence, seal exact artifacts, and queue a fresh read-only schema-constrained Codex review. Only a current strict dual approval satisfies its gate.",
+      inputSchema: {
+        phase: z.enum(REVIEW_PHASES),
+        mode: z.enum(["strict", "draft"]),
+        artifactPaths: z.array(z.string().min(1).max(4_096)).min(1).max(64),
+        expectedRevision: z
+          .string()
+          .regex(/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/)
+          .optional(),
+        baseRevision: z
+          .string()
+          .regex(/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/)
+          .optional(),
+        hostReview: z
+          .object({
+            reviewId: z.string().min(1).max(128),
+            verdict: z.enum(["approved", "changes-requested"]),
+            summary: z.string().min(1).max(8_000),
+            findings: z
+              .array(
+                z
+                  .object({
+                    id: z.string().min(1).max(128),
+                    severity: z.enum(["low", "medium", "high", "critical"]),
+                    requirement: z.string().min(1).max(512),
+                    summary: z.string().min(1).max(2_000),
+                    artifactPath: z.string().min(1).max(4_096),
+                    line: z.number().int().min(1).max(10_000_000).optional(),
+                    nextAction: z.string().min(1).max(2_000),
+                  })
+                  .strict(),
+              )
+              .max(100),
+            declaredModelLabel: z.string().min(1).max(128).optional(),
+          })
+          .strict(),
+        focus: z.string().min(1).max(4_000).optional(),
+        ...runtimeJobShape,
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) =>
+      await safeResult(
+        async () =>
+          await application.jobs.submitReview({
+            phase: input.phase,
+            mode: input.mode,
+            artifactPaths: input.artifactPaths,
+            hostReview: {
+              reviewId: input.hostReview.reviewId,
+              verdict: input.hostReview.verdict,
+              summary: input.hostReview.summary,
+              findings: input.hostReview.findings.map((finding) => ({
+                id: finding.id,
+                severity: finding.severity,
+                requirement: finding.requirement,
+                summary: finding.summary,
+                artifactPath: finding.artifactPath,
+                ...(finding.line === undefined ? {} : { line: finding.line }),
+                nextAction: finding.nextAction,
+              })),
+              ...(input.hostReview.declaredModelLabel === undefined
+                ? {}
+                : {
+                    declaredModelLabel: input.hostReview.declaredModelLabel,
+                  }),
+            },
+            ...(input.expectedRevision === undefined
+              ? {}
+              : { expectedRevision: input.expectedRevision }),
+            ...(input.baseRevision === undefined
+              ? {}
+              : { baseRevision: input.baseRevision }),
+            ...(input.focus === undefined ? {} : { focus: input.focus }),
+            ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+            ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.reasoningEffort === undefined
+              ? {}
+              : { reasoningEffort: input.reasoningEffort }),
+            ...(input.timeoutMs === undefined
+              ? {}
+              : { timeoutMs: input.timeoutMs }),
+            ...(input.idempotencyKey === undefined
+              ? {}
+              : { idempotencyKey: input.idempotencyKey }),
+          }),
+      ),
   );
 
   server.registerTool(

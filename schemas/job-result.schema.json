@@ -34,7 +34,8 @@
         "patchAvailable"
       ],
       "additionalProperties": false
-    }
+    },
+    "review": { "$ref": "./sdd/v1/review-artifact.schema.json" }
   },
   "required": ["ready", "job"],
   "additionalProperties": false

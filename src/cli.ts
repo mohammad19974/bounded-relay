@@ -4,6 +4,11 @@ import { ERROR_CODES, WorkerError, toWorkerError } from "./core/errors.js";
 import { startMcpServer } from "./mcp/server.js";
 import { assertNotRecursing } from "./security/delegation-policy.js";
 import { createWorkerApplication } from "./worker-application.js";
+import {
+  locateIntegrationPack,
+  validateIntegrationPack,
+} from "./sdd/integration-pack.js";
+import { routeSddTasks, type SddRoutingInput } from "./sdd/routing/index.js";
 
 const HELP = `BoundedRelay 0.1.0
 
@@ -11,6 +16,9 @@ Usage:
   boundedrelay serve       Start the local stdio MCP server (default)
   boundedrelay doctor      Validate Codex, Git, authentication, and policy
   boundedrelay config      Print the effective non-secret configuration
+  boundedrelay sdd path    Print the packaged Spec Kit/Claude integration path
+  boundedrelay sdd validate  Validate packaged integration assets without installing
+  boundedrelay sdd route   Route one JSON request from stdin without a model call
   boundedrelay --version   Print the worker version
   boundedrelay --help      Show this help
 
@@ -19,7 +27,11 @@ The server writes only MCP protocol messages to stdout. Diagnostics use stderr.
 
 async function main(args = process.argv.slice(2)): Promise<void> {
   const command = args[0] ?? "serve";
-  if (args.length > 1) {
+  const sddSubcommand = command === "sdd" ? args[1] : undefined;
+  if (
+    (command === "sdd" && args.length !== 2) ||
+    (command !== "sdd" && args.length > 1)
+  ) {
     throw new WorkerError(
       ERROR_CODES.INVALID_REQUEST,
       "This command does not accept additional arguments",
@@ -33,6 +45,30 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   if (command === "--version" || command === "-V" || command === "version") {
     process.stdout.write("0.1.0\n");
     return;
+  }
+
+  if (command === "sdd" && sddSubcommand === "path") {
+    process.stdout.write(`${await locateIntegrationPack()}\n`);
+    return;
+  }
+  if (command === "sdd" && sddSubcommand === "validate") {
+    process.stdout.write(
+      `${JSON.stringify(await validateIntegrationPack(), null, 2)}\n`,
+    );
+    return;
+  }
+  if (command === "sdd" && sddSubcommand === "route") {
+    const request = await readJsonStdin(256 * 1024);
+    process.stdout.write(
+      `${JSON.stringify(routeSddTasks(request as SddRoutingInput))}\n`,
+    );
+    return;
+  }
+  if (command === "sdd") {
+    throw new WorkerError(
+      ERROR_CODES.INVALID_REQUEST,
+      `Unknown SDD command: ${sddSubcommand ?? "missing"}`,
+    );
   }
 
   assertNotRecursing(process.env.CCW_DELEGATION_DEPTH);
@@ -114,6 +150,36 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   process.stdin.once("end", () => {
     void shutdown();
   });
+}
+
+async function readJsonStdin(maximumBytes: number): Promise<unknown> {
+  if (process.stdin.isTTY) {
+    throw new WorkerError(
+      ERROR_CODES.INVALID_REQUEST,
+      "SDD route input must be provided as JSON on stdin",
+    );
+  }
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for await (const chunk of process.stdin) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += bytes.byteLength;
+    if (totalBytes > maximumBytes) {
+      throw new WorkerError(
+        ERROR_CODES.INVALID_REQUEST,
+        `SDD route input exceeds ${maximumBytes} bytes`,
+      );
+    }
+    chunks.push(bytes);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new WorkerError(
+      ERROR_CODES.INVALID_REQUEST,
+      "SDD route input must be valid JSON",
+    );
+  }
 }
 
 void main().catch((error: unknown) => {

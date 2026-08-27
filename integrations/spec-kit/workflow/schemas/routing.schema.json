@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/spec-kit/routing.schema.json",
+  "title": "BoundedRelay weighted routing evidence",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "runId",
+    "state",
+    "revision",
+    "planReviewSha256",
+    "taskManifest",
+    "taskManifestSha256",
+    "target",
+    "router",
+    "assignments",
+    "totals",
+    "deviations",
+    "preparedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "routing" },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "state": { "enum": ["pending", "complete"] },
+    "revision": { "type": "object" },
+    "planReviewSha256": { "$ref": "#/$defs/sha256" },
+    "taskManifest": { "$ref": "#/$defs/taskManifest" },
+    "taskManifestSha256": { "$ref": "#/$defs/sha256" },
+    "target": {
+      "type": "object",
+      "required": [
+        "metric",
+        "soft",
+        "codexPercent",
+        "claudePercent",
+        "tieBreak"
+      ],
+      "properties": {
+        "metric": { "const": "fit-neutral-estimated-effort" },
+        "soft": { "const": true },
+        "codexPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "claudePercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "tieBreak": {
+          "const": "codex-on-true-50-50-odd-neutral-tie"
+        }
+      },
+      "additionalProperties": false
+    },
+    "router": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["tool", "request", "result"],
+          "properties": {
+            "tool": { "const": "codex_worker_sdd_route" },
+            "request": { "type": "object" },
+            "result": {
+              "type": "object",
+              "required": [
+                "schemaVersion",
+                "routingPolicyVersion",
+                "fitPolicyVersion",
+                "selectionOrder",
+                "planFingerprint",
+                "tasks",
+                "assignments",
+                "waves",
+                "balance",
+                "reasons"
+              ],
+              "properties": {
+                "schemaVersion": { "const": 1 },
+                "routingPolicyVersion": { "const": "sdd-routing-v2" },
+                "fitPolicyVersion": { "const": "sdd-task-fit-v1" },
+                "planFingerprint": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "tasks": { "type": "array" },
+                "assignments": { "type": "array" },
+                "waves": { "type": "array" },
+                "balance": { "type": "object" },
+                "reasons": { "type": "array" },
+                "selectionOrder": {
+                  "const": [
+                    "hard-eligibility",
+                    "quality-fit",
+                    "preferred-lane-tie-break",
+                    "neutral-effort-balance",
+                    "neutral-task-count-balance",
+                    "odd-neutral-tie-to-codex",
+                    "lexical-task-id"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "assignments": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": [
+          "taskId",
+          "provider",
+          "reviewerProvider",
+          "risk",
+          "authority",
+          "kind",
+          "wave",
+          "effort",
+          "writePaths",
+          "dependencies",
+          "rationale",
+          "revisionSeal",
+          "modelPolicy"
+        ],
+        "properties": {
+          "taskId": { "type": "string" },
+          "provider": { "enum": ["codex", "claude-host"] },
+          "reviewerProvider": { "enum": ["codex", "claude-host"] },
+          "risk": { "enum": ["low", "medium", "high", "critical"] },
+          "authority": { "enum": ["read-only", "write"] },
+          "kind": {
+            "enum": [
+              "analysis",
+              "planning",
+              "architecture",
+              "implementation",
+              "debugging",
+              "testing",
+              "refactor",
+              "review",
+              "security-review",
+              "documentation",
+              "integration"
+            ]
+          },
+          "wave": { "type": "integer", "minimum": 1 },
+          "effort": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "writePaths": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 100,
+            "items": { "type": "string" }
+          },
+          "dependencies": { "type": "array", "items": { "type": "string" } },
+          "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "revisionSeal": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "modelPolicy": { "$ref": "#/$defs/modelPolicy" },
+          "reviewerModelPolicy": { "$ref": "#/$defs/modelPolicy" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "totals": { "type": ["object", "null"] },
+    "deviations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "preparedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "taskManifest": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "sourcePath",
+        "sourceSha256",
+        "tasks",
+        "pendingTaskIds"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "sourcePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "sourceSha256": { "$ref": "#/$defs/sha256" },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["id", "completed"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^T[0-9]{3,}$" },
+              "completed": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "pendingTaskIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "type": "string", "pattern": "^T[0-9]{3,}$" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "modelPolicy": {
+      "type": "object",
+      "required": ["source", "model"],
+      "properties": {
+        "source": { "enum": ["host-selected", "server-allowlisted"] },
+        "model": { "type": ["string", "null"] },
+        "reasoningEffort": {
+          "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

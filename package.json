@@ -1,7 +1,7 @@
 {
   "name": "boundedrelay",
   "version": "0.1.0",
-  "description": "Policy-first MCP delegation from Claude Code to Codex with live status and isolated patch proposals.",
+  "description": "A policy-first Claude Code-to-Codex orchestration boundary with adaptive routing, strict review, live status, and isolated proposals.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
@@ -20,6 +20,7 @@
     "dist",
     "docs",
     "examples",
+    "integrations",
     "schemas",
     "README.md",
     "CHANGELOG.md",
@@ -42,7 +43,9 @@
     "code-review",
     "orchestration",
     "sandbox",
-    "job-progress"
+    "job-progress",
+    "spec-driven-development",
+    "multi-agent-routing"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

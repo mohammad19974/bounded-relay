@@ -5,9 +5,10 @@ MCP tools and security boundary documented in
 [Tool reference](../tool-reference.md).
 
 - [Read-only repository review](read-only-review.md)
+- [Adaptive quality-first task routing](adaptive-task-routing.md)
 - [Independent review of a frozen plan](dual-plan-review.md)
 - [Bounded implementation proposal](bounded-proposal.md)
-- [Optional Spec Kit three-gate workflow](../integrations/spec-kit.md)
+- [Optional Adaptive Spec Kit workflow](../integrations/spec-kit.md)
 
 Every example uses placeholders. Replace paths and revisions with values
 returned by `codex_worker_workspace`. Never copy a revision or write scope from

@@ -25,11 +25,10 @@ authentication path.
 
 ### Git
 
-Replace `<repository-url>` with the URL of the published BoundedRelay
-repository:
+Clone the BoundedRelay GitHub repository:
 
 ```bash
-git clone <repository-url> bounded-relay
+git clone https://github.com/mohammad19974/bounded-relay.git
 cd bounded-relay
 ```
 
@@ -65,10 +64,14 @@ From the BoundedRelay directory:
 ```bash
 node dist/cli.js doctor
 node dist/cli.js config
+node dist/cli.js sdd validate
+node dist/cli.js sdd path
 ```
 
 `doctor` should report `ok: true`, `compatible: true`, and an authenticated
-Codex login. `config` prints only non-secret effective settings.
+Codex login. `config` prints only non-secret effective settings. `sdd validate`
+checks the packaged optional integration files without installing them, while
+`sdd path` prints their absolute root.
 
 Do not start `serve` by hand for normal use. Claude Code owns the stdio process
 and restarts it as needed.
@@ -137,8 +140,9 @@ claude mcp list
 ```
 
 Start Claude Code inside the Git repository you want to inspect, then run
-`/mcp`. Confirm that `bounded-relay` is connected and exposes seven tools by
-default. Enabling proposal mode adds the eighth tool, `codex_worker_propose`.
+`/mcp`. Confirm that `bounded-relay` is connected and exposes nine tools by
+default, including `codex_worker_sdd_route` and `codex_worker_sdd_review`.
+Enabling proposal mode adds the tenth tool, `codex_worker_propose`.
 
 ## 7. First read-only task
 
@@ -214,7 +218,83 @@ A proposal requires:
 BoundedRelay creates the change in a disposable clone, returns a validated patch
 artifact, and never applies it to the source checkout.
 
-## 10. Upgrade, rebuild, or remove
+## 10. Optional Adaptive SDD pack
+
+The source repository uses `.specify/` for its own governance and includes a
+generic integration pack for consumer repositories. The MCP runtime does not
+load Spec Kit automatically. Do not copy this checkout's `.specify/` directory
+into another project.
+
+### Discover and validate the packaged files
+
+From this source checkout:
+
+```bash
+npm link
+boundedrelay sdd validate
+INTEGRATION_ROOT="$(boundedrelay sdd path)"
+```
+
+`npm link` is needed only when you want the optional plugin's `.mcp.json` to
+resolve the `boundedrelay` executable from `PATH`. Direct MCP registration from
+step 5 does not need it.
+
+### Install the local Spec Kit extension and workflow
+
+Initialize a supported Spec Kit consumer repository first, then run:
+
+```bash
+specify extension add "$INTEGRATION_ROOT/spec-kit/extension" --dev
+specify workflow add "$INTEGRATION_ROOT/spec-kit/workflow" --dev
+
+specify extension list
+specify extension info boundedrelay-sdd
+specify workflow list
+specify workflow info boundedrelay-adaptive-sdd
+```
+
+The `--dev` installs reference the checked-out local directories. Keep the
+BoundedRelay checkout in place while using them. Review any consumer-repository
+changes and add `.specify/workflows/runs/` to its `.gitignore`; run evidence can
+contain paths, findings, and job IDs.
+
+Start the workflow with explicit inputs:
+
+```bash
+specify workflow run boundedrelay-adaptive-sdd \
+  -i spec="Implement the approved feature contract" \
+  -i scope="apps/api and packages/contracts" \
+  -i feature_directory="specs/001-example" \
+  -i codex_share=50
+```
+
+The 50 value is neutral metadata, not a quota. Hard eligibility, versioned
+task-kind fit, and an applicable exact-fit preference come first, so the actual
+share may be anywhere from 0% to 100%. Only a true neutral tie reaches the
+odd-task Codex preference. None of these fields measures tokens, price, or
+elapsed time.
+
+### Validate and load the optional Claude Code plugin
+
+The plugin has no Claude model override. It uses the model already selected by
+the Claude Code host and starts `boundedrelay serve` through its MCP
+declaration. On a machine with Claude Code installed:
+
+```bash
+claude plugin validate "$INTEGRATION_ROOT/claude-code-plugin"
+claude --plugin-dir "$INTEGRATION_ROOT/claude-code-plugin"
+```
+
+`boundedrelay sdd validate` is only a package-structure check. Automated tests
+do not invoke Claude Code, so run the host validation yourself before relying on
+the plugin. The direct MCP registration in step 5 remains the simpler stable
+local setup when plugin loading is unnecessary. Do not activate both MCP
+definitions in one session; keep one canonical BoundedRelay server entry.
+
+Read the [Adaptive SDD guide](integrations/spec-kit.md) before running strict
+review gates or enabling routed write proposals.
+
+## 11. Upgrade, rebuild, or remove
 
 From the local clone:
 
@@ -234,6 +314,19 @@ claude mcp remove bounded-relay --scope user
 ```
 
 This does not delete the BoundedRelay source directory or any target project.
+
+If you used `npm link`, remove only its global link when it is no longer needed:
+
+```bash
+npm unlink --global boundedrelay
+```
+
+Remove the local Spec Kit extension/workflow using the removal commands
+advertised by `specify extension --help` and `specify workflow --help` for your
+installed version. Delete ignored `.specify/workflows/runs/` evidence only after
+confirming no active run needs it. A stale review is recovered by creating a new
+clean checkpoint and rerunning both host and Codex reviews; never edit a seal or
+reuse an old approval.
 
 ## Common setup failures
 

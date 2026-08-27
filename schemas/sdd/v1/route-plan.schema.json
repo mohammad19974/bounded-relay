@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/sdd/v1/route-plan.schema.json",
+  "title": "BoundedRelay deterministic SDD routing plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "routingPolicyVersion",
+    "fitPolicyVersion",
+    "selectionOrder",
+    "planFingerprint",
+    "reasons",
+    "tasks",
+    "assignments",
+    "waves",
+    "balance"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "routingPolicyVersion": { "const": "sdd-routing-v2" },
+    "fitPolicyVersion": { "const": "sdd-task-fit-v1" },
+    "selectionOrder": {
+      "const": [
+        "hard-eligibility",
+        "quality-fit",
+        "preferred-lane-tie-break",
+        "neutral-effort-balance",
+        "neutral-task-count-balance",
+        "odd-neutral-tie-to-codex",
+        "lexical-task-id"
+      ]
+    },
+    "planFingerprint": { "$ref": "#/$defs/sha256" },
+    "reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reason" }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "allOf": [
+          { "$ref": "./route-input.schema.json#/$defs/task" },
+          {
+            "required": ["dependencies", "writeScopes", "eligibleLanes"]
+          }
+        ]
+      }
+    },
+    "assignments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "taskId",
+          "lane",
+          "wave",
+          "selectedFitScore",
+          "laneFit",
+          "decisionStage",
+          "reasons"
+        ],
+        "properties": {
+          "taskId": { "type": "string" },
+          "lane": { "enum": ["codex", "claude-host"] },
+          "wave": { "type": "integer", "minimum": 1 },
+          "selectedFitScore": { "type": "integer" },
+          "alternateFitScore": { "type": "integer" },
+          "laneFit": { "$ref": "#/$defs/laneTotals" },
+          "decisionStage": {
+            "enum": [
+              "hard-eligibility",
+              "quality-fit",
+              "preferred-lane-tie-break",
+              "neutral-balance"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/reason" }
+          }
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["wave", "taskIds"],
+        "properties": {
+          "wave": { "type": "integer", "minimum": 1 },
+          "taskIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "writerTaskId": { "type": "string" }
+        }
+      }
+    },
+    "balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "neutralCodexShareBps",
+        "actualCodexShareBps",
+        "absoluteEffortDeviationBps",
+        "totalEffortPoints",
+        "effortPoints",
+        "taskCount",
+        "totalWeightedFitScore",
+        "decisionCounts",
+        "deviations"
+      ],
+      "properties": {
+        "neutralCodexShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "actualCodexShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "absoluteEffortDeviationBps": { "type": "integer", "minimum": 0 },
+        "totalEffortPoints": { "type": "integer", "minimum": 1 },
+        "effortPoints": { "$ref": "#/$defs/laneTotals" },
+        "taskCount": { "$ref": "#/$defs/laneTotals" },
+        "totalWeightedFitScore": { "type": "integer" },
+        "decisionCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "hard-eligibility",
+            "quality-fit",
+            "preferred-lane-tie-break",
+            "neutral-balance"
+          ],
+          "properties": {
+            "hard-eligibility": { "type": "integer", "minimum": 0 },
+            "quality-fit": { "type": "integer", "minimum": 0 },
+            "preferred-lane-tie-break": { "type": "integer", "minimum": 0 },
+            "neutral-balance": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "deviations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "enum": [
+                  "HARD_ELIGIBILITY",
+                  "ADAPTIVE_FIT_POLICY",
+                  "EFFORT_GRANULARITY"
+                ]
+              },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "laneTotals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codex", "claude-host"],
+      "properties": {
+        "codex": { "type": "integer", "minimum": 0 },
+        "claude-host": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
