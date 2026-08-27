@@ -1,0 +1,35 @@
+{
+  "ready": true,
+  "job": {
+    "id": "8b2ee4f3-6e85-4c69-b9cc-1422254b4e91",
+    "revision": 9,
+    "status": "completed",
+    "mode": "analyze",
+    "cwd": "/work/example-project",
+    "repositoryRoot": "/work/example-project",
+    "createdAt": "2026-08-27T12:00:00.000Z",
+    "startedAt": "2026-08-27T12:00:00.100Z",
+    "completedAt": "2026-08-27T12:00:08.000Z",
+    "progress": {
+      "phase": "terminal",
+      "activity": "completed",
+      "activityLabel": "Job completed",
+      "eventCount": 7,
+      "commandCount": 2,
+      "messageCount": 1,
+      "lastEventType": "turn.completed",
+      "updatedAt": "2026-08-27T12:00:08.000Z",
+      "elapsedMs": 8000,
+      "sinceLastUpdateMs": 0
+    },
+    "usage": {
+      "inputTokens": 4200,
+      "cachedInputTokens": 3000,
+      "outputTokens": 450,
+      "reasoningOutputTokens": 120
+    },
+    "resultAvailable": true,
+    "resultTruncated": false
+  },
+  "finalMessage": "Illustrative result: one high-confidence parser finding with file evidence."
+}

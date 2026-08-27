@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workspace summary",
+  "type": "object",
+  "properties": {
+    "cwd": { "type": "string" },
+    "repositoryRoot": { "type": "string" },
+    "revision": {
+      "type": "string",
+      "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"
+    },
+    "clean": { "type": "boolean" },
+    "proposalReady": { "type": "boolean" },
+    "proposalBlockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "cwd",
+    "repositoryRoot",
+    "revision",
+    "clean",
+    "proposalReady",
+    "proposalBlockers"
+  ],
+  "additionalProperties": false
+}

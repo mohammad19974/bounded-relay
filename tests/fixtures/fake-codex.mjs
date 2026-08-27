@@ -1,0 +1,153 @@
+#!/usr/bin/env node
+
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const args = process.argv.slice(2);
+
+if (args.length === 1 && args[0] === "--version") {
+  process.stdout.write("codex-cli 99.0.0-test\n");
+  process.exit(0);
+}
+
+if (args[0] === "login" && args[1] === "status") {
+  if (process.env.FAKE_LOGIN_FAIL === "1") {
+    process.stderr.write("not logged in\n");
+    process.exit(1);
+  }
+  process.stdout.write("logged in\n");
+  process.exit(0);
+}
+
+if (args.length === 1 && args[0] === "--help") {
+  process.stdout.write(
+    process.env.FAKE_INCOMPATIBLE === "1"
+      ? "usage: codex\n"
+      : "--strict-config --sandbox --ask-for-approval --cd\n",
+  );
+  process.exit(0);
+}
+
+if (args[0] === "exec" && args[1] === "--help") {
+  process.stdout.write(
+    process.env.FAKE_INCOMPATIBLE === "1"
+      ? "usage: codex exec\n"
+      : "--json --ephemeral --ignore-user-config --ignore-rules --color\n",
+  );
+  process.exit(0);
+}
+
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+
+process.stdin.on("end", () => {
+  const capturePath = process.env.FAKE_CAPTURE_PATH;
+  if (capturePath) {
+    writeFileSync(
+      capturePath,
+      JSON.stringify({
+        args,
+        cwd: process.cwd(),
+        prompt,
+        delegationDepth: process.env.CCW_DELEGATION_DEPTH,
+        leakedSecret: process.env.UNFORWARDED_SECRET,
+      }),
+      "utf8",
+    );
+  }
+
+  if (process.env.FAKE_CODEX_SCENARIO === "proposal") {
+    writeFileSync(
+      resolve(process.cwd(), "src/allowed.ts"),
+      "export const value = 2;\n",
+      "utf8",
+    );
+  }
+
+  switch (process.env.FAKE_CODEX_SCENARIO) {
+    case "unsafe-event-type":
+      emit({
+        type: "secret.must-not-reach-status",
+        payload: { secret: "must-not-reach-status" },
+      });
+      emit({
+        type: "thread.started",
+        thread_id: `thread-unsafe\n${"x".repeat(200)}`,
+      });
+      emit({
+        type: "item.completed",
+        item: { type: "agent_message", text: "safe final" },
+      });
+      emit({
+        type: "turn.completed",
+        usage: {
+          input_tokens: 1,
+          cached_input_tokens: 0,
+          output_tokens: 1,
+          reasoning_output_tokens: 0,
+        },
+      });
+      break;
+    case "malformed":
+      process.stdout.write("{not-json}\n");
+      break;
+    case "no-final":
+      emit({ type: "turn.completed", usage: {} });
+      break;
+    case "no-terminal":
+      emit({
+        type: "item.completed",
+        item: { type: "agent_message", text: "message without terminal" },
+      });
+      break;
+    case "output-limit":
+      process.stdout.write("x".repeat(256_000));
+      break;
+    case "timeout":
+      process.on("SIGTERM", () => process.exit(0));
+      setInterval(() => undefined, 1_000);
+      return;
+    case "cancel":
+      process.on("SIGTERM", () => process.exit(0));
+      setInterval(() => undefined, 1_000);
+      return;
+    case "failure-event":
+      emit({ type: "turn.failed", error: { message: "bad\u0000turn" } });
+      break;
+    case "stderr-failure":
+      process.stderr.write("private\nerror\tmessage\n");
+      process.exitCode = 7;
+      break;
+    default:
+      process.stdout.write(
+        '{"type":"thread.started","thread_id":"thread-test"}\r\n',
+      );
+      emit({ type: "turn.started" });
+      process.stdout.write('{"type":"future.event","payload":true}\n');
+      emit({ type: "item.started", item: { type: "command_execution" } });
+      emit({ type: "item.updated", item: { type: "command_execution" } });
+      process.stdout.write(
+        '{"type":"item.completed","item":{"type":"command_execution"}}\n',
+      );
+      emit({ type: "item.started", item: { type: "agent_message" } });
+      process.stdout.write(
+        '{"type":"item.completed","item":{"type":"agent_message","text":"fake final"}}\n',
+      );
+      emit({
+        type: "turn.completed",
+        usage: {
+          input_tokens: 10,
+          cached_input_tokens: 2,
+          output_tokens: 4,
+          reasoning_output_tokens: 1,
+        },
+      });
+  }
+});
+
+function emit(value) {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}

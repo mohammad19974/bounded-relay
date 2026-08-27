@@ -1,0 +1,39 @@
+{
+  "ready": true,
+  "job": {
+    "id": "9c1a5f04-8d74-4661-a5f7-02b53e8230b0",
+    "revision": 12,
+    "status": "completed",
+    "mode": "proposal",
+    "cwd": "/work/example-project",
+    "repositoryRoot": "/work/example-project",
+    "writePaths": ["src/parser", "tests/parser"],
+    "expectedRevision": "0123456789abcdef0123456789abcdef01234567",
+    "createdAt": "2026-08-27T12:05:00.000Z",
+    "startedAt": "2026-08-27T12:05:00.200Z",
+    "completedAt": "2026-08-27T12:05:14.000Z",
+    "progress": {
+      "phase": "terminal",
+      "activity": "completed",
+      "activityLabel": "Job completed",
+      "eventCount": 11,
+      "commandCount": 4,
+      "messageCount": 1,
+      "lastEventType": "turn.completed",
+      "updatedAt": "2026-08-27T12:05:14.000Z",
+      "elapsedMs": 14000,
+      "sinceLastUpdateMs": 0
+    },
+    "resultAvailable": true,
+    "resultTruncated": false
+  },
+  "finalMessage": "Illustrative result: proposed a bounded parser fix and focused regression test.",
+  "proposal": {
+    "effect": "proposal",
+    "baselineRevision": "0123456789abcdef0123456789abcdef01234567",
+    "changedFiles": ["src/parser/state.ts", "tests/parser/state.test.ts"],
+    "patchBytes": 2840,
+    "patchSha256": "f9d8166f35b5ce958b81898e5130fa7c3ae8a1bbfaeb40aaa2aa0a1d2218d426",
+    "patchAvailable": true
+  }
+}

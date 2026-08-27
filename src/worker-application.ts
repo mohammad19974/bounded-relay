@@ -1,0 +1,52 @@
+import type { WorkerConfig } from "./config/worker-config.js";
+import { loadWorkerConfig } from "./config/worker-config.js";
+import { JobManager } from "./core/job-manager.js";
+import type { WorkerHealth } from "./core/types.js";
+import { LeaseManager } from "./core/lease-manager.js";
+import { collectWorkerHealth } from "./runtime/doctor.js";
+import { CodexRuntime } from "./runtime/codex-runtime.js";
+import { GitClient } from "./runtime/git-client.js";
+import { ProposalWorkspace } from "./runtime/proposal-workspace.js";
+import { WorkspaceInspector } from "./runtime/workspace-inspector.js";
+import { resolveWorkerExecutables } from "./security/executable-policy.js";
+import { initializeSecurityPolicy } from "./security/state-policy.js";
+
+export interface WorkerApplication {
+  readonly config: WorkerConfig;
+  readonly jobs: JobManager;
+  readonly workspaces: WorkspaceInspector;
+  health(): Promise<WorkerHealth>;
+}
+
+export async function createWorkerApplication(
+  options: {
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly processDirectory?: string;
+  } = {},
+): Promise<WorkerApplication> {
+  const environment = options.environment ?? process.env;
+  const configured = loadWorkerConfig(
+    environment,
+    options.processDirectory ?? process.cwd(),
+  );
+  const secured = await initializeSecurityPolicy(configured);
+  const config = await resolveWorkerExecutables(secured, environment);
+  const git = new GitClient(config, environment);
+  const proposalWorkspace = new ProposalWorkspace(config, git);
+  const leases = new LeaseManager(config.stateDirectory);
+  const runtime = new CodexRuntime(config, environment);
+  const jobs = new JobManager({
+    config,
+    runtime,
+    proposalWorkspace,
+    leases,
+  });
+  await jobs.initialize();
+
+  return {
+    config,
+    jobs,
+    workspaces: new WorkspaceInspector(config, git),
+    health: async () => await collectWorkerHealth(config, environment),
+  };
+}

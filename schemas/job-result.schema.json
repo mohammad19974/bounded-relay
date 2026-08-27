@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Job result",
+  "type": "object",
+  "properties": {
+    "ready": { "type": "boolean" },
+    "job": { "$ref": "./public-job-snapshot.schema.json" },
+    "finalMessage": { "type": "string" },
+    "proposal": {
+      "type": "object",
+      "properties": {
+        "effect": { "enum": ["none", "proposal"] },
+        "baselineRevision": {
+          "type": "string",
+          "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"
+        },
+        "changedFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "patchBytes": { "type": "integer", "minimum": 0 },
+        "patchSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "patchAvailable": { "type": "boolean" },
+        "patch": { "type": "string" }
+      },
+      "required": [
+        "effect",
+        "baselineRevision",
+        "changedFiles",
+        "patchBytes",
+        "patchAvailable"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": ["ready", "job"],
+  "additionalProperties": false
+}

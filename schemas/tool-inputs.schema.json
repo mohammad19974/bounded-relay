@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoundedRelay MCP tool input definitions",
+  "$comment": "This file is a definition bundle. Validate one tool's arguments against the matching $defs entry.",
+  "$defs": {
+    "commonJobProperties": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000,
+          "pattern": "\\S"
+        },
+        "cwd": { "type": "string", "maxLength": 4096 },
+        "model": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "reasoningEffort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"]
+        },
+        "timeoutMs": { "type": "integer", "minimum": 1000 },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      },
+      "required": ["task"]
+    },
+    "codex_worker_capabilities": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "codex_worker_workspace": {
+      "type": "object",
+      "properties": {
+        "cwd": { "type": "string", "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "codex_worker_analyze": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/commonJobProperties" }],
+      "unevaluatedProperties": false
+    },
+    "codex_worker_propose": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/commonJobProperties" },
+        {
+          "type": "object",
+          "properties": {
+            "writePaths": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+            },
+            "expectedRevision": {
+              "type": "string",
+              "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"
+            }
+          },
+          "required": ["writePaths", "expectedRevision"]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "codex_worker_status": {
+      "type": "object",
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "waitMs": { "type": "integer", "minimum": 0, "maximum": 30000 },
+        "afterRevision": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["jobId"],
+      "additionalProperties": false
+    },
+    "codex_worker_result": {
+      "type": "object",
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" },
+        "includePatch": { "type": "boolean", "default": false }
+      },
+      "required": ["jobId"],
+      "additionalProperties": false
+    },
+    "codex_worker_cancel": {
+      "type": "object",
+      "properties": {
+        "jobId": { "type": "string", "format": "uuid" }
+      },
+      "required": ["jobId"],
+      "additionalProperties": false
+    },
+    "codex_worker_list": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": ["queued", "running", "completed", "failed", "cancelled"]
+        },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

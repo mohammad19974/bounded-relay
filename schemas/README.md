@@ -1,0 +1,21 @@
+# JSON Schemas
+
+These draft 2020-12 schemas document the v0.1 public data contract:
+
+- [`tool-inputs.schema.json`](tool-inputs.schema.json)
+- [`workspace-summary.schema.json`](workspace-summary.schema.json)
+- [`public-job-snapshot.schema.json`](public-job-snapshot.schema.json)
+- [`job-result.schema.json`](job-result.schema.json)
+
+Runtime MCP input validation is implemented with Zod in `src/mcp/server.ts`;
+source and contract tests are authoritative. Keep these schemas synchronized
+whenever a public field changes.
+
+`tool-inputs.schema.json` is a definition bundle rather than a schema for an
+invented MCP envelope. Validate an arguments object against the `$defs` entry
+whose name exactly matches the tool, for example `#/$defs/codex_worker_analyze`.
+Its numeric maxima show the v0.1 defaults where noted; runtime-discovered limits
+remain authoritative because the server owner can configure them.
+
+The schemas do not describe environment configuration because v0.1 has no JSON
+configuration file. See [Configuration](../docs/configuration.md).

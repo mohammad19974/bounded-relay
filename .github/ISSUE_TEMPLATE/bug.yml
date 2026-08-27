@@ -1,0 +1,99 @@
+name: Bug report
+description:
+  Report a reproducible worker defect without private repository data.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Follow SECURITY.md and remove credentials, prompts,
+        private source, personal paths, and proprietary Codex output.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I can reproduce this in a disposable Git repository.
+          required: true
+
+  - type: input
+    id: worker-version
+    attributes:
+      label: Worker version or revision
+      placeholder: 0.1.0 or Git revision
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Sanitized environment
+      description:
+        Include OS, Node.js, Claude Code, Codex CLI, and Git versions. Never
+        include environment values.
+      placeholder: |
+        OS:
+        Node.js:
+        Claude Code:
+        Codex CLI:
+        Git:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Server startup or MCP connection
+        - Analyze
+        - Proposal
+        - Status, result, list, or cancellation
+        - Documentation or packaging
+    validations:
+      required: true
+
+  - type: input
+    id: error-code
+    attributes:
+      label: Worker error code
+      description: Use the stable code only; sanitize the message.
+      placeholder: INVALID_PATH
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimal reproduction
+      description:
+        Use fake paths and a disposable repository. Describe tool inputs without
+        private task content.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description:
+        Short excerpts only. Do not paste full JSONL streams, patches, source,
+        or secrets.

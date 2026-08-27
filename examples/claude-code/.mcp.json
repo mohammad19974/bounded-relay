@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bounded-relay": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/bounded-relay/dist/cli.js", "serve"],
+      "env": {
+        "CCW_ENABLE_PROPOSALS": "false"
+      }
+    }
+  }
+}

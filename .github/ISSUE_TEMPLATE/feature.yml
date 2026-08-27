@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a user need and its least-authority design.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the user problem. Changes to persistence, transport, credentials, source writes,
+        or patch application require a threat-model and ADR update.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What cannot be done safely with the current public tools?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-workaround
+    attributes:
+      label: Current workaround
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Smallest useful behavior
+      description:
+        Describe outcomes and authority, not implementation preference alone.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Boundary impact
+      options:
+        - label: Changes filesystem write authority
+        - label: Adds persistence or retention
+        - label: Adds a network listener or remote service
+        - label: Changes credential handling
+        - label: Changes patch validation or application
+        - label: Changes MCP tool or error contracts
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Acceptance evidence
+      description:
+        What deterministic tests would prove the behavior and safety boundary?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
