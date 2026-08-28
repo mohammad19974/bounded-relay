@@ -68,6 +68,7 @@ export class CodexRuntime implements WorkerRuntime {
     let settled = false;
     let stopReason: StopReason | undefined;
     let forceKillTimer: NodeJS.Timeout | undefined;
+    let drainTimer: NodeJS.Timeout | undefined;
     let outputBytes = 0;
     let finalMessage: string | undefined;
     let sessionId: string | undefined;
@@ -89,6 +90,9 @@ export class CodexRuntime implements WorkerRuntime {
       clearTimeout(timeoutTimer);
       if (forceKillTimer !== undefined) {
         clearTimeout(forceKillTimer);
+      }
+      if (drainTimer !== undefined) {
+        clearTimeout(drainTimer);
       }
       resolveCompletion(result);
     };
@@ -164,6 +168,21 @@ export class CodexRuntime implements WorkerRuntime {
           notFound ? "executable-not-found" : "process-start",
         ),
       });
+    });
+
+    // `close` waits for every inherited stdio pipe. A descendant that escaped
+    // the process group keeps those pipes open, so the run would never settle
+    // and its concurrency slot would leak. Once the Codex process itself is
+    // gone, give the pipes a bounded drain window and then force them shut.
+    child.once("exit", () => {
+      if (settled || drainTimer !== undefined) {
+        return;
+      }
+      drainTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, this.#config.cancelGraceMs);
+      drainTimer.unref();
     });
 
     child.on("close", (exitCode) => {

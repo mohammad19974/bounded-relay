@@ -344,6 +344,17 @@ export class JobManager {
         "Proposal mode is disabled; restart with CCW_ENABLE_PROPOSALS=true",
       );
     }
+    if (
+      input.resumeSessionId !== undefined &&
+      !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+        input.resumeSessionId,
+      )
+    ) {
+      throw new WorkerError(
+        ERROR_CODES.INVALID_REQUEST,
+        "resumeSessionId must be a Codex session UUID",
+      );
+    }
     if (mode === "analyze" && input.expectedRevision !== undefined) {
       throw new WorkerError(
         ERROR_CODES.INVALID_REQUEST,
@@ -442,6 +453,10 @@ export class JobManager {
       ...(input.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: input.idempotencyKey }),
+      ...(input.resumeSessionId === undefined
+        ? {}
+        : { resumeSessionId: input.resumeSessionId.toLowerCase() }),
+      ...(input.persistSession === true ? { persistSession: true } : {}),
     };
   }
 
@@ -807,20 +822,21 @@ export class JobManager {
   }
 
   #evictHistory(): void {
-    if (this.#jobs.size <= this.#config.maxHistory) {
-      return;
-    }
     const terminalJobs = [...this.#jobs.values()]
       .filter((job) => isTerminal(job.status))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    // The bound applies to retained history only. Queued and running jobs are
+    // never evicted and must never displace a result the caller can still read.
+    let retained = terminalJobs.length;
     for (const job of terminalJobs) {
-      if (this.#jobs.size <= this.#config.maxHistory) {
+      if (retained <= this.#config.maxHistory) {
         break;
       }
       this.#jobs.delete(job.id);
       if (job.request.idempotencyKey !== undefined) {
         this.#idempotency.delete(job.request.idempotencyKey);
       }
+      retained -= 1;
     }
   }
 }

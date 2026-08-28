@@ -375,6 +375,62 @@ describe("MCP stdio contract", () => {
     }
   }, 20_000);
 
+  it("rejects an empty cwd instead of silently using the server directory", async () => {
+    const testClient = await startTestClient(false);
+    try {
+      const response = await testClient.client.callTool({
+        name: "codex_worker_analyze",
+        arguments: { task: "Review the fixture.", cwd: "" },
+      });
+      expect(response.isError).toBe(true);
+    } finally {
+      await testClient.close();
+    }
+  }, 20_000);
+
+  it("keeps the stdio connection usable when a policy-valid patch is large", async () => {
+    const testClient = await startTestClient(true, "proposal-large", {
+      CCW_MAX_PATCH_BYTES: "20000000",
+    });
+    try {
+      const submitted = await testClient.client.callTool({
+        name: "codex_worker_propose",
+        arguments: {
+          task: "Propose the large bounded fixture change.",
+          cwd: testClient.repository.root,
+          writePaths: ["src/allowed.ts"],
+          expectedRevision: testClient.repository.revision,
+        },
+      });
+      const jobId = String(asRecord(submitted.structuredContent).id);
+      await waitForMcpTerminal(testClient.client, jobId);
+
+      // The worker accepted this patch under its own configured limit, so the
+      // result must come back as a bounded answer instead of breaking stdio.
+      const withPatch = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId, includePatch: true },
+      });
+      const structured = asRecord(withPatch.structuredContent);
+      if (structured.error === undefined) {
+        expect(asRecord(structured.proposal).patch).toEqual(
+          expect.stringContaining("diff --git"),
+        );
+      } else {
+        expect(asRecord(structured.error).code).toBe("OUTPUT_LIMIT_EXCEEDED");
+      }
+
+      // The connection must still serve the next call.
+      const followUp = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId, includePatch: false },
+      });
+      expect(asRecord(followUp.structuredContent).ready).toBe(true);
+    } finally {
+      await testClient.close();
+    }
+  }, 60_000);
+
   it("does not expose unknown event payloads or unsafe session identifiers", async () => {
     const testClient = await startTestClient(false, "unsafe-event-type");
     try {
@@ -408,6 +464,7 @@ describe("MCP stdio contract", () => {
 async function startTestClient(
   enableProposals: boolean,
   scenario?: string,
+  extraEnvironment: Readonly<Record<string, string>> = {},
 ): Promise<TestClient> {
   const repository = await createTestRepository();
   const stateDirectory = await makeStateDirectory();
@@ -429,6 +486,7 @@ async function startTestClient(
       ? {}
       : { CCW_FORWARD_ENV: "FAKE_CODEX_SCENARIO" }),
     ...(scenario === undefined ? {} : { FAKE_CODEX_SCENARIO: scenario }),
+    ...extraEnvironment,
   });
   // `--import` accepts an ESM specifier. A raw Windows drive path is parsed as
   // a custom URL scheme (for example, `D:`), so always provide a file URL.

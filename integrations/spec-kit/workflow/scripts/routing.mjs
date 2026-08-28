@@ -22,6 +22,7 @@ import {
   canonicalDigest,
   evidencePath,
   fail,
+  failChild,
   fileDigest,
   hostReviewContextId,
   optionalProjectProfilePath,
@@ -103,7 +104,7 @@ function authoritativeRoute(request) {
     },
   );
   if (execution.error || execution.status !== 0) {
-    fail(
+    failChild(
       "the packaged authoritative SDD router is unavailable or rejected the recorded request",
     );
   }
@@ -128,7 +129,10 @@ function authoritativeProfile(profile) {
     },
   );
   if (execution.error || execution.status !== 0) {
-    fail("the configured project_profile is not accepted by BoundedRelay");
+    failChild(
+      "the configured project_profile is not accepted by BoundedRelay",
+      execution,
+    );
   }
   let output;
   try {

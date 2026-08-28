@@ -26,6 +26,7 @@ import {
   currentGitRevision,
   evidencePath,
   fail,
+  failChild,
   fileDigest,
   printSuccess,
   readJson,
@@ -67,7 +68,10 @@ function assertVerifiedProof(runId) {
     shell: false,
   });
   if (result.error || result.status !== 0) {
-    fail("handoff preparation requires a currently verified proof pack");
+    failChild(
+      "handoff preparation requires a currently verified proof pack",
+      result,
+    );
   }
 }
 
@@ -123,7 +127,7 @@ function assertVerifiedProofIsolated(context, runId) {
       },
     );
     if (result.error || result.status !== 0) {
-      fail("isolated handoff proof revalidation failed");
+      failChild("isolated handoff proof revalidation failed", result);
     }
   } finally {
     rmSync(temporaryRoot, RECURSIVE_REMOVE_OPTIONS);

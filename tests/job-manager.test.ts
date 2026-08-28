@@ -645,6 +645,31 @@ describe("JobManager lifecycle", () => {
     expect(manager.list()).toEqual([]);
     expect(await readdir(join(stateDirectory, "reviews"))).toEqual([]);
   });
+
+  test("keeps a completed result while pending jobs fill the history limit", async () => {
+    const { manager, runtime, repository } = await makeManager({
+      maxConcurrent: 1,
+      maxHistory: 10,
+    });
+    const completed = await manager.submit({
+      task: "first",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "completed",
+      finalMessage: "final answer",
+      resultTruncated: false,
+    });
+    await waitForTerminal(manager, completed.id);
+
+    // Pending work must never evict the only finished result.
+    for (let index = 0; index < 10; index += 1) {
+      await manager.submit({ task: `pending-${index}`, cwd: repository.root });
+    }
+
+    expect(manager.result(completed.id)).toMatchObject({ ready: true });
+  });
 });
 
 describe("JobManager proposal integration", () => {

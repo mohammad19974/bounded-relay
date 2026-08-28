@@ -20,6 +20,7 @@ import {
   currentGitRevision,
   evidencePath,
   fail,
+  failChild,
   fileDigest,
   printSuccess,
   readJson,
@@ -102,7 +103,10 @@ function assertStaticRouting(runId) {
     },
   );
   if (result.error || result.status !== 0) {
-    fail("wave execution requires fully verified routing evidence");
+    failChild(
+      "wave execution requires fully verified routing evidence",
+      result,
+    );
   }
 }
 
@@ -472,7 +476,7 @@ function runCheckpointGit(context, args, environment = undefined) {
       : { env: { ...process.env, ...environment } }),
   });
   if (result.error || result.status !== 0) {
-    fail("Git could not verify the exact writer checkpoint");
+    failChild("Git could not verify the exact writer checkpoint", result);
   }
   return result.stdout.trim().toLowerCase();
 }

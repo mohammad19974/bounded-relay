@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
@@ -86,6 +87,83 @@ describe("LeaseManager", () => {
       await recovered.release();
     },
   );
+
+  test("recovers a lock left behind by a worker that died mid-acquire", async () => {
+    const state = await makeStateDirectory();
+    cleanupPaths.push(state);
+    const manager = new LeaseManager(state);
+    await manager.initialize();
+    const repository = "/repository/ownerless";
+    const key = createHash("sha256").update(repository).digest("hex");
+    // A crash between creating the lock directory and publishing owner.json
+    // must not block every future proposal on this repository forever.
+    await mkdir(join(state, "locks", key), { recursive: true });
+
+    const recovered = await manager.acquire(repository, "replacement-job");
+    await recovered.release();
+  });
+
+  test("reclaims an abandoned lease whose owner pid was recycled", async () => {
+    const state = await makeStateDirectory();
+    cleanupPaths.push(state);
+    const manager = new LeaseManager(state, { staleMs: 5_000 });
+    await manager.initialize();
+    const repository = "/repository/recycled-pid";
+    const key = createHash("sha256").update(repository).digest("hex");
+    const lockDirectory = join(state, "locks", key);
+    await mkdir(lockDirectory, { recursive: true });
+    // The recorded pid is alive, but it belongs to an unrelated process that
+    // reused the number. Liveness alone would lock this repository forever.
+    await writeFile(
+      join(lockDirectory, "owner.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        jobId: "abandoned-job",
+        pid: process.pid,
+        hostname: hostname(),
+        token: "abandoned-token",
+        acquiredAt: new Date(0).toISOString(),
+      }),
+      "utf8",
+    );
+    const longAgo = new Date(Date.now() - 600_000);
+    await utimes(lockDirectory, longAgo, longAgo);
+
+    const recovered = await manager.acquire(repository, "replacement-job");
+    await recovered.release();
+  });
+
+  test("does not delete a lease that another worker has taken over", async () => {
+    const state = await makeStateDirectory();
+    cleanupPaths.push(state);
+    const manager = new LeaseManager(state);
+    await manager.initialize();
+    const repository = "/repository/taken-over";
+    const key = createHash("sha256").update(repository).digest("hex");
+    const lockDirectory = join(state, "locks", key);
+
+    const handle = await manager.acquire(repository, "first-job");
+    // Simulate a recovering worker that replaced the lock with its own.
+    await writeFile(
+      join(lockDirectory, "owner.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        jobId: "second-job",
+        pid: process.pid,
+        hostname: hostname(),
+        token: "second-worker-token",
+        acquiredAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
+    await handle.release();
+
+    const survivor = JSON.parse(
+      await readFile(join(lockDirectory, "owner.json"), "utf8"),
+    ) as { readonly jobId: string };
+    expect(survivor.jobId).toBe("second-job");
+  });
 
   test("fails closed for a malformed existing lease", async () => {
     const state = await makeStateDirectory();

@@ -37,6 +37,7 @@ export async function startMcpServer(
   const runtimeJobShape = {
     cwd: z
       .string()
+      .min(1)
       .max(4_096)
       .optional()
       .describe("Existing directory inside a configured allowed root"),
@@ -52,6 +53,20 @@ export async function startMcpServer(
       .min(1_000)
       .max(application.config.maxTimeoutMs)
       .optional(),
+    resumeSessionId: z
+      .string()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe(
+        "Continue a recorded Codex thread returned by an earlier job's sessionId",
+      ),
+    persistSession: z
+      .boolean()
+      .optional()
+      .describe(
+        "Keep this run's Codex session on disk so a later job can resume it",
+      ),
     idempotencyKey: z.string().min(1).max(128).optional(),
   };
   const commonJobShape = {
@@ -328,6 +343,12 @@ export async function startMcpServer(
           ...(input.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: input.idempotencyKey }),
+          ...(input.resumeSessionId === undefined
+            ? {}
+            : { resumeSessionId: input.resumeSessionId }),
+          ...(input.persistSession === undefined
+            ? {}
+            : { persistSession: input.persistSession }),
         }),
       ),
   );
@@ -517,6 +538,10 @@ function presentJobResult(result: JobResult, includePatch: boolean): unknown {
   };
 }
 
+// The MCP stdio SDK reads at most 10 MiB per frame. Stay under it with room
+// for JSON escaping and the protocol envelope.
+const MAX_TOOL_RESULT_WIRE_BYTES = 8 * 1024 * 1024;
+
 interface ToolCallResult {
   readonly [key: string]: unknown;
   readonly content: { readonly type: "text"; readonly text: string }[];
@@ -541,15 +566,34 @@ function makeToolResult(value: unknown, isError: boolean): ToolCallResult {
   const structuredContent = isRecord(normalized)
     ? normalized
     : { value: normalized };
+  // Every frame carries the payload twice: once as text and once as
+  // `structuredContent`. Refuse to write a frame the transport cannot read
+  // back, otherwise an oversized but policy-valid result closes the session.
+  const text = JSON.stringify(structuredContent);
+  if (Buffer.byteLength(text, "utf8") * 2 > MAX_TOOL_RESULT_WIRE_BYTES) {
+    return oversizedToolResult();
+  }
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(structuredContent, null, 2),
-      },
-    ],
+    content: [{ type: "text" as const, text }],
     structuredContent,
     ...(isError ? { isError: true } : {}),
+  };
+}
+
+function oversizedToolResult(): ToolCallResult {
+  const structuredContent = {
+    error: {
+      code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED,
+      message:
+        "The result is too large for the MCP stdio transport; request it without the patch body or lower CCW_MAX_PATCH_BYTES",
+    },
+  };
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(structuredContent) },
+    ],
+    structuredContent,
+    isError: true,
   };
 }
 

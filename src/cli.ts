@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { ERROR_CODES, WorkerError, toWorkerError } from "./core/errors.js";
+import { shutdownWorker } from "./core/shutdown.js";
 import { startMcpServer } from "./mcp/server.js";
 import { assertNotRecursing } from "./security/delegation-policy.js";
 import { createWorkerApplication } from "./worker-application.js";
@@ -173,23 +174,24 @@ async function main(args = process.argv.slice(2)): Promise<void> {
 
   const mcp = await startMcpServer(application);
   let shuttingDown = false;
-  const shutdown = async (): Promise<void> => {
+  const shutdown = (): void => {
     if (shuttingDown) {
       return;
     }
     shuttingDown = true;
-    await application.jobs.shutdown();
-    await mcp.close();
+    // A failing shutdown must still close the transport and report itself
+    // instead of surfacing as an unhandled rejection.
+    void shutdownWorker(application.jobs, mcp).catch((error: unknown) => {
+      const workerError = toWorkerError(error);
+      process.stderr.write(
+        `[boundedrelay] ${workerError.code}: ${workerError.message}\n`,
+      );
+      process.exitCode = 1;
+    });
   };
-  process.once("SIGINT", () => {
-    void shutdown();
-  });
-  process.once("SIGTERM", () => {
-    void shutdown();
-  });
-  process.stdin.once("end", () => {
-    void shutdown();
-  });
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  process.stdin.once("end", shutdown);
 }
 
 function routeRequest(input: unknown): unknown {

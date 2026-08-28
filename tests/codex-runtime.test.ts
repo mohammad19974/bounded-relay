@@ -74,6 +74,57 @@ process.stdin.on("end", () => {
   return executable;
 }
 
+async function writeEscapingCodex(root: string): Promise<string> {
+  const executable = join(root, "escaping-codex.mjs");
+  // Emits a complete turn, then leaves a detached descendant holding the
+  // inherited stdout pipe open long after the Codex process itself exits.
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+process.stdin.resume();
+process.stdin.on("end", () => {
+  spawn(
+    process.execPath,
+    ["-e", "setTimeout(() => undefined, 60000)"],
+    { detached: true, stdio: ["ignore", "inherit", "inherit"] },
+  ).unref();
+  process.stdout.write(
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }) + "\\n",
+  );
+  process.stdout.write(JSON.stringify({ type: "turn.completed", usage: {} }) + "\\n");
+  process.exit(0);
+});
+`,
+    "utf8",
+  );
+  return executable;
+}
+
+describe.runIf(process.platform !== "win32")(
+  "CodexRuntime descendant containment",
+  () => {
+    test("settles a run whose descendant escapes and holds stdout open", async () => {
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const escaping = await writeEscapingCodex(root);
+      await ensureExecutable(escaping);
+      const runtime = new CodexRuntime(
+        runtimeConfig({ codexExecutable: escaping }),
+        { HOME: process.env.HOME, PATH: process.env.PATH },
+      );
+
+      const started = Date.now();
+      const result = await runtime.start(makeRequest(root), () => undefined)
+        .completion;
+
+      expect(result.outcome).toBe("completed");
+      // Must not wait on the escaped descendant's 60s lifetime.
+      expect(Date.now() - started).toBeLessThan(15_000);
+    }, 30_000);
+  },
+);
+
 describe("Windows process-tree termination", () => {
   test("uses SystemRoot taskkill without a shell and falls back on launch failure", () => {
     const unref = vi.fn((): void => undefined);
