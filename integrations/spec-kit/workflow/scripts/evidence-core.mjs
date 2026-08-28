@@ -15,6 +15,7 @@ import { relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
 export const MAX_EVIDENCE_BYTES = 256 * 1024;
+export const MAX_PROJECT_PROFILE_BYTES = 128 * 1024;
 const MAX_INPUT_BYTES = 128 * 1024;
 const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_ARTIFACTS = 64;
@@ -185,15 +186,60 @@ export function evidencePath(context, name) {
   return path;
 }
 
-export function artifactRevision(context, artifacts, includeWorktree = false) {
-  const repositoryPaths = artifactRepositoryPaths(context, artifacts);
+export function optionalProjectProfilePath(context) {
+  const value = context?.inputs?.project_profile;
+  if (value === undefined || value === "") {
+    return null;
+  }
+  const repositoryPath = safeRepositoryPath(value, "project_profile");
+  const path = resolve(context.projectRoot, ...repositoryPath.split("/"));
+  assertInside(context.projectRoot, path, "project profile");
+  assertNoSymlinkSegments(
+    context.projectRoot,
+    repositoryPath,
+    "project profile",
+  );
+  assertRegularFile(path, "project profile", MAX_PROJECT_PROFILE_BYTES);
+  const committedBytes = readCommittedRepositoryFile(
+    context,
+    currentGitRevision(context),
+    repositoryPath,
+    "project profile",
+    MAX_PROJECT_PROFILE_BYTES,
+  );
+  if (!readFileSync(path).equals(committedBytes)) {
+    fail("project_profile does not match the sealed Git revision");
+  }
+  return repositoryPath;
+}
+
+export function artifactRevision(
+  context,
+  artifacts,
+  includeWorktree = false,
+  extraRepositoryPaths = [],
+) {
+  const repositoryPaths = artifactRepositoryPaths(
+    context,
+    artifacts,
+    extraRepositoryPaths,
+  );
   return projectRevision(context, repositoryPaths, includeWorktree, null);
 }
 
-export function artifactRevisionAt(context, revisionValue, artifacts) {
+export function artifactRevisionAt(
+  context,
+  revisionValue,
+  artifacts,
+  extraRepositoryPaths = [],
+) {
   const head = normalizedRevision(revisionValue, "artifact revision");
   runGit(context.projectRoot, ["rev-parse", "--verify", `${head}^{commit}`]);
-  const repositoryPaths = artifactRepositoryPaths(context, artifacts);
+  const repositoryPaths = artifactRepositoryPaths(
+    context,
+    artifacts,
+    extraRepositoryPaths,
+  );
   if (repositoryPaths.length === 0 || repositoryPaths.length > MAX_ARTIFACTS) {
     fail(`strict review supports 1-${MAX_ARTIFACTS} existing artifacts`);
   }
@@ -232,11 +278,15 @@ export function artifactRevisionAt(context, revisionValue, artifacts) {
   return { ...payload, seal: digest(JSON.stringify(payload)) };
 }
 
-function artifactRepositoryPaths(context, artifacts) {
-  return artifacts.map((name) => {
+function artifactRepositoryPaths(context, artifacts, extraRepositoryPaths) {
+  const featurePaths = artifacts.map((name) => {
     assertSafeIdentifier(name.replace(/\.md$/u, ""), "artifact name");
     return `${context.featureDirectory}/${name}`;
   });
+  const extras = extraRepositoryPaths.map((path) =>
+    safeRepositoryPath(path, "additional review artifact path"),
+  );
+  return [...featurePaths, ...extras];
 }
 
 export function comparisonRevision(
@@ -244,12 +294,14 @@ export function comparisonRevision(
   baseRevisionValue,
   requiredArtifacts,
   includeWorktree = true,
+  extraRepositoryPaths = [],
 ) {
   const comparison = repositoryRevisionComparison(context, baseRevisionValue);
-  const requiredPaths = requiredArtifacts.map((name) => {
-    assertSafeIdentifier(name.replace(/\.md$/u, ""), "artifact name");
-    return `${context.featureDirectory}/${name}`;
-  });
+  const requiredPaths = artifactRepositoryPaths(
+    context,
+    requiredArtifacts,
+    extraRepositoryPaths,
+  );
   return projectRevision(
     context,
     [...new Set(requiredPaths)],

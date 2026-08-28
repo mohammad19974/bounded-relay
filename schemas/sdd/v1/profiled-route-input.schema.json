@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/sdd/v1/profiled-route-input.schema.json",
+  "title": "BoundedRelay profiled SDD route input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tasks", "projectProfile"],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "./route-input.schema.json#/$defs/task" }
+    },
+    "neutralCodexShareBps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "default": 5000
+    },
+    "projectProfile": { "$ref": "./project-profile.schema.json" }
+  }
+}

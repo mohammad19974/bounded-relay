@@ -87,6 +87,7 @@ const REASONING_EFFORTS = new Set([
   "max",
   "ultra",
 ]);
+const MAX_WRITER_CHECK_RECEIPTS = 256;
 const ROUTING_SCRIPT = fileURLToPath(new URL("./routing.mjs", import.meta.url));
 
 function assertStaticRouting(runId) {
@@ -205,7 +206,51 @@ function pathInLease(path, leases) {
   return leases.some((scope) => path === scope || path.startsWith(`${scope}/`));
 }
 
-function validateResult(result, assignment, baselineRevision, context) {
+function assertProfileCheckCoverage(receipts, assignment, projectProfile) {
+  if (projectProfile === null) {
+    return;
+  }
+  const definitions = new Map(
+    projectProfile.checkProfiles.map((profile) => [profile.id, profile]),
+  );
+  for (const receipt of receipts) {
+    const definition = definitions.get(receipt.profile);
+    if (
+      definition === undefined ||
+      receipt.cwd !== definition.cwd ||
+      receipt.commandSha256 !== definition.commandSha256
+    ) {
+      fail(
+        `task ${assignment.taskId} has a receipt outside its sealed project check profiles`,
+      );
+    }
+  }
+  for (const required of assignment.requiredCheckProfiles) {
+    const definition = definitions.get(required.id);
+    if (
+      definition === undefined ||
+      canonicalDigest(definition) !== canonicalDigest(required) ||
+      !receipts.some(
+        (receipt) =>
+          receipt.profile === required.id &&
+          receipt.cwd === required.cwd &&
+          receipt.commandSha256 === required.commandSha256,
+      )
+    ) {
+      fail(
+        `task ${assignment.taskId} is missing required project check ${required.id}`,
+      );
+    }
+  }
+}
+
+function validateResult(
+  result,
+  assignment,
+  baselineRevision,
+  context,
+  projectProfile,
+) {
   if (
     typeof result !== "object" ||
     result === null ||
@@ -232,12 +277,13 @@ function validateResult(result, assignment, baselineRevision, context) {
   }
 
   if (assignment.provider === "codex") {
+    const expectedPolicy =
+      projectProfile === null ? assignment.modelPolicy : assignment.codexPolicy;
     if (
       result.transport !== "boundedrelay" ||
       result.modelSource !== "worker-resolved" ||
-      result.model !== assignment.modelPolicy?.model ||
-      result.reasoningEffort !==
-        (assignment.modelPolicy?.reasoningEffort ?? null)
+      result.model !== expectedPolicy?.model ||
+      result.reasoningEffort !== (expectedPolicy?.reasoningEffort ?? null)
     ) {
       fail(
         `task ${assignment.taskId} does not match its routed BoundedRelay model policy`,
@@ -292,6 +338,7 @@ function validateResult(result, assignment, baselineRevision, context) {
     fail(`task ${assignment.taskId} changed a path outside its lease`);
   }
   assertCheckReceipts(result.checks, `task ${assignment.taskId}.checks`, true);
+  assertProfileCheckCoverage(result.checks, assignment, projectProfile);
   if (assignment.provider === "codex") {
     if (result.effect !== "proposal-integrated") {
       fail(`Codex writer ${assignment.taskId} requires an integrated proposal`);
@@ -358,7 +405,13 @@ function validateWaveResults(
     if (assignment === undefined) {
       fail(`wave ${wave.wave} contains an unexpected result`);
     }
-    validateResult(result, assignment, baselineRevision, context);
+    validateResult(
+      result,
+      assignment,
+      baselineRevision,
+      context,
+      routing.projectProfile ?? null,
+    );
   }
   return { assignments, results };
 }
@@ -385,6 +438,26 @@ function validateDependencyOrder(document, routing) {
         fail(`task ${assignment.taskId} ran before dependency ${dependencyId}`);
       }
     }
+  }
+}
+
+function assertAggregateWriterReceiptLimit(document, routing, maximumWave) {
+  const assignments = assignmentMap(routing);
+  let receiptCount = 0;
+  for (const result of document.results) {
+    const assignment = assignments.get(result.taskId);
+    if (
+      assignment?.authority === "write" &&
+      assignment.wave <= maximumWave &&
+      result.wave === assignment.wave
+    ) {
+      receiptCount += result.checks.length;
+    }
+  }
+  if (receiptCount > MAX_WRITER_CHECK_RECEIPTS) {
+    fail(
+      `execution exceeds aggregate limit of ${MAX_WRITER_CHECK_RECEIPTS} writer check receipts`,
+    );
   }
 }
 
@@ -589,6 +662,10 @@ function validateHistory(document, routing, waves, context) {
       context,
     );
   }
+  const lastCompletedWave = document.completedWaves.at(-1);
+  if (lastCompletedWave !== undefined) {
+    assertAggregateWriterReceiptLimit(document, routing, lastCompletedWave);
+  }
   validateDependencyOrder(document, routing);
   return expectedBase;
 }
@@ -688,6 +765,7 @@ function verifyWave(runId, context, routing, waves, document, path) {
     expectedBase,
     context,
   );
+  assertAggregateWriterReceiptLimit(document, routing, wave.wave);
   validateDependencyOrder(document, routing);
   assertCleanWorkflowWorktree(context);
   const completedRevision = currentGitRevision(context);

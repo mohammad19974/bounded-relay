@@ -4,13 +4,24 @@ import { ERROR_CODES, WorkerError, toWorkerError } from "./core/errors.js";
 import { startMcpServer } from "./mcp/server.js";
 import { assertNotRecursing } from "./security/delegation-policy.js";
 import { createWorkerApplication } from "./worker-application.js";
+import { BOUNDEDRELAY_VERSION } from "./version.js";
 import {
   locateIntegrationPack,
   validateIntegrationPack,
 } from "./sdd/integration-pack.js";
-import { routeSddTasks, type SddRoutingInput } from "./sdd/routing/index.js";
+import {
+  SddRoutingError,
+  createProjectProfileTemplate,
+  normalizeProjectProfile,
+  projectProfileFingerprint,
+  routeProfiledSddTasks,
+  routeSddTasks,
+  type ProfiledSddRoutingInput,
+  type SddProjectProfileInput,
+  type SddRoutingInput,
+} from "./sdd/routing/index.js";
 
-const HELP = `BoundedRelay 0.1.0
+const HELP = `BoundedRelay ${BOUNDEDRELAY_VERSION}
 
 Usage:
   boundedrelay serve       Start the local stdio MCP server (default)
@@ -19,6 +30,8 @@ Usage:
   boundedrelay sdd path    Print the packaged Spec Kit/Claude integration path
   boundedrelay sdd validate  Validate packaged integration assets without installing
   boundedrelay sdd route   Route one JSON request from stdin without a model call
+  boundedrelay profile template  Print a safe generic project-profile template
+  boundedrelay profile validate  Normalize and fingerprint one profile from stdin
   boundedrelay --version   Print the worker version
   boundedrelay --help      Show this help
 
@@ -28,9 +41,10 @@ The server writes only MCP protocol messages to stdout. Diagnostics use stderr.
 async function main(args = process.argv.slice(2)): Promise<void> {
   const command = args[0] ?? "serve";
   const sddSubcommand = command === "sdd" ? args[1] : undefined;
+  const profileSubcommand = command === "profile" ? args[1] : undefined;
   if (
-    (command === "sdd" && args.length !== 2) ||
-    (command !== "sdd" && args.length > 1)
+    ((command === "sdd" || command === "profile") && args.length !== 2) ||
+    (command !== "sdd" && command !== "profile" && args.length > 1)
   ) {
     throw new WorkerError(
       ERROR_CODES.INVALID_REQUEST,
@@ -43,7 +57,7 @@ async function main(args = process.argv.slice(2)): Promise<void> {
     return;
   }
   if (command === "--version" || command === "-V" || command === "version") {
-    process.stdout.write("0.1.0\n");
+    process.stdout.write(`${BOUNDEDRELAY_VERSION}\n`);
     return;
   }
 
@@ -59,15 +73,41 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   }
   if (command === "sdd" && sddSubcommand === "route") {
     const request = await readJsonStdin(256 * 1024);
-    process.stdout.write(
-      `${JSON.stringify(routeSddTasks(request as SddRoutingInput))}\n`,
-    );
+    process.stdout.write(`${JSON.stringify(routeRequest(request))}\n`);
     return;
   }
   if (command === "sdd") {
     throw new WorkerError(
       ERROR_CODES.INVALID_REQUEST,
       `Unknown SDD command: ${sddSubcommand ?? "missing"}`,
+    );
+  }
+  if (command === "profile" && profileSubcommand === "template") {
+    process.stdout.write(
+      `${JSON.stringify(createProjectProfileTemplate(), null, 2)}\n`,
+    );
+    return;
+  }
+  if (command === "profile" && profileSubcommand === "validate") {
+    const input = await readJsonStdin(128 * 1024);
+    const profile = normalizeProfile(input);
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          valid: true,
+          profile,
+          profileFingerprint: projectProfileFingerprint(profile),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return;
+  }
+  if (command === "profile") {
+    throw new WorkerError(
+      ERROR_CODES.INVALID_REQUEST,
+      `Unknown profile command: ${profileSubcommand ?? "missing"}`,
     );
   }
 
@@ -150,6 +190,46 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   process.stdin.once("end", () => {
     void shutdown();
   });
+}
+
+function routeRequest(input: unknown): unknown {
+  try {
+    if (hasProjectProfile(input)) {
+      // Both routing paths perform their own strict runtime validation. The
+      // CLI deliberately keeps stdin as `unknown` until that boundary.
+      return routeProfiledSddTasks(input as unknown as ProfiledSddRoutingInput);
+    }
+    return routeSddTasks(input as SddRoutingInput);
+  } catch (error) {
+    if (error instanceof SddRoutingError) {
+      throw new WorkerError(ERROR_CODES.INVALID_REQUEST, error.message);
+    }
+    throw error;
+  }
+}
+
+function normalizeProfile(
+  input: unknown,
+): ReturnType<typeof normalizeProjectProfile> {
+  try {
+    return normalizeProjectProfile(input as SddProjectProfileInput);
+  } catch (error) {
+    if (error instanceof SddRoutingError) {
+      throw new WorkerError(ERROR_CODES.INVALID_REQUEST, error.message);
+    }
+    throw error;
+  }
+}
+
+function hasProjectProfile(
+  input: unknown,
+): input is Readonly<Record<string, unknown>> & { projectProfile: unknown } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    "projectProfile" in input
+  );
 }
 
 async function readJsonStdin(maximumBytes: number): Promise<unknown> {

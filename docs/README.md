@@ -10,6 +10,9 @@ remain authoritative when a document drifts.
   Code registration, first run, upgrades, and removal.
 - [Configuration](configuration.md) — startup policy, limits, model allowlist,
   environment, and state directory.
+- [Portable project profiles](project-profiles.md) — strict non-executable
+  capability, write, check, and Codex-policy data that can only narrow server
+  authority.
 - [MCP tool reference](tool-reference.md) — exact tool names, inputs, results,
   deterministic routing, structured dual review, lifecycle, and errors.
 - [Compatibility](compatibility.md) — Node.js, Claude Code, Codex CLI, Git,

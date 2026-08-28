@@ -144,6 +144,37 @@ latency, or quality.
 Risk does not bias a lane. A critical task instead triggers the optional
 workflow's cross-provider reviewer and explicit profile policy.
 
+### Portable project-profile router
+
+The additive `routeProfiledSddTasks` path accepts a strict `projectProfile` and
+returns schema version `2` under `sdd-routing-v3` and `sdd-capability-fit-v1`.
+The legacy `routeSddTasks` path remains separate so omitting a profile preserves
+its established output and fingerprint.
+
+```mermaid
+flowchart LR
+    Server[Server-owned policy] --> Intersection[Effective-policy intersection]
+    Operator[Trusted operator configuration] --> Intersection
+    Profile[Reviewed non-executable project profile] --> Intersection
+    Request[Bounded task request] --> Intersection
+    Intersection --> Route[Deterministic profiled route]
+    Route --> Evidence[Capabilities, scopes, checks,<br/>Codex policy, fingerprints]
+```
+
+Profile normalization and routing are pure: they do not read a repository, start
+a provider, or execute a declared check. Capability minimums can remove a lane
+only after hard task eligibility is applied. Write policy can only narrow task
+scopes. Check definitions contribute canonical `argv`/`cwd` digests for later
+receipt matching, while the caller-owned coordinator retains command execution
+authority. Codex model policy resolves by risk, then kind, then default and
+remains subject to the server allowlist; no profile field selects a Claude host
+model.
+
+The normalized profile fingerprint and profiled plan fingerprint are content
+addresses, not signatures or identity attestations. See
+[Portable project profiles](project-profiles.md) and
+[ADR 0010](adr/0010-portable-intersection-only-project-profiles.md).
+
 ### Optional wave-ordered execution
 
 The packaged Spec Kit workflow makes routing executable without turning the MCP
@@ -210,9 +241,10 @@ evidence.
 
 For implementation and convergence, the frozen host review ID is derived from
 the run and phase, nonce, sealed revision, source-evidence digest, check digest,
-and prepared Codex review policy. A critical task on the Claude-host lane forces
-the Codex implementation/convergence cross-review policy to `gpt-5.6-sol` /
-`ultra`; the profile is exact-or-refuse and never changes the user-selected
+and prepared Codex review policy. Legacy no-profile critical work keeps the
+fixed `gpt-5.6-sol` / `ultra` policy. A profiled plan instead fingerprints one
+global cross-review policy resolved from its highest task risk using
+`risk -> review kind -> default` precedence; it never changes the user-selected
 Claude host model.
 
 ### Content-addressed SDD review
@@ -256,6 +288,14 @@ the server starts. The runtime parses JSONL incrementally, maps events to a
 fixed safe activity vocabulary, counts real events, captures the last agent
 message, records reported token usage, limits combined stdout/stderr bytes, and
 terminates the child process tree on cancellation or timeout.
+
+On Windows, executable resolution prefers native `.com`/`.exe` commands. The
+standard npm-installed `codex.cmd` is mapped to its adjacent
+`@openai/codex/bin/codex.js` and launched with the current Node executable and
+an argument array. Arbitrary batch or PowerShell shims are rejected; the worker
+never enables `shell: true`. Git receives `core.longpaths=true`, hook isolation
+uses `NUL`, and process-tree termination resolves `taskkill.exe` only from the
+absolute Windows system directory before falling back to the child handle.
 
 Before `serve` accepts MCP traffic, the worker probes global and `exec` help and
 refuses an installed Codex CLI that does not advertise every required flag.
@@ -380,9 +420,10 @@ an MCP declaration. Neither is activated automatically.
 
 The Claude lane is always `claude-host`: the model comes from the current Claude
 Code session. BoundedRelay neither launches Claude nor selects or verifies its
-model. Codex model overrides remain explicit and server-allowlisted. The
-packaged policy requires allowlisted `gpt-5.6-sol` with `ultra` for the Codex
-lane of every critical route; it fails instead of substituting another profile.
+model. Codex model overrides remain explicit and server-allowlisted. The legacy
+no-profile policy requires `gpt-5.6-sol` with `ultra` for critical routes;
+profiled routes require their explicit allowlisted critical policy and fail
+instead of substituting another profile.
 
 The final proof pack is assembled and immediately verified. Both operations
 statically rerun the authoritative router and exact-match all routing

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -48,6 +48,14 @@ describe("path containment", () => {
     expect(pathsOverlap(join(parent, "src"), join(parent, "tests"))).toBe(
       false,
     );
+  });
+
+  test("rejects cross-drive Windows paths with pure win32 semantics", () => {
+    expect(isPathInside("C:\\allowed", "C:\\allowed\\nested", win32)).toBe(
+      true,
+    );
+    expect(isPathInside("C:\\allowed", "D:\\outside", win32)).toBe(false);
+    expect(pathsOverlap("C:\\state", "D:\\repository", win32)).toBe(false);
   });
 });
 

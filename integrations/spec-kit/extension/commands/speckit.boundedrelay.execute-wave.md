@@ -27,11 +27,18 @@ future wave or broaden a path lease.
    recomputed digest. The patch is local run evidence and must never be added to
    Git.
 4. Run focused repository checks against the completed working-tree content.
-   Record 1-32 redacted check receipts: safe profile and label, SHA-256 of the
+   Record 1-64 redacted check receipts: safe profile and label, SHA-256 of the
    exact argv, relative cwd, zero exit code, output digests, the exact tested
    Git tree ID, and timestamps. The tested tree must equal the following
    authorized checkpoint commit tree. Never persist raw output, environment
-   values, tokens, or secrets.
+   values, tokens, or secrets. With a project profile, every required check ID
+   must have a successful receipt whose `profile`, `cwd`, and `commandSha256`
+   exactly match the sealed definition. Extra receipts are allowed only for
+   check IDs defined by that profile. Across all writer results, required and
+   optional receipts together must not exceed 256; refuse the active wave before
+   checkpointing if it would add receipt 257. The coordinator may run reviewed
+   commands; no BoundedRelay workflow script executes profile `argv`
+   automatically.
 5. Append exactly one typed result per active task. Preserve every engine-owned
    field. Results include routed provider/wave, effect, baseline, provenance,
    the worker-observed model and reasoning effort, verification, timestamps, and

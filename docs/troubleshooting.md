@@ -48,6 +48,13 @@ the MCP server environment.
 Do not point it at a shell script that interprets task data. The worker expects
 an executable that implements the Codex CLI contract.
 
+On Windows, install Codex with OpenAI's standalone PowerShell installer or the
+official `@openai/codex` npm package. A native `codex.exe` is launched directly;
+the standard npm `codex.cmd` is resolved to its reviewed Node.js entrypoint.
+Other `.cmd`, `.bat`, or `.ps1` shims are refused because Node cannot execute
+them directly without introducing a command shell. If needed, set
+`CCW_CODEX_BIN` to the absolute native `codex.exe` path and rerun `doctor`.
+
 ## `CODEX_INCOMPATIBLE`
 
 The worker found Codex but its global or `exec` help does not advertise every
@@ -176,11 +183,13 @@ Resolve findings, create a new authorized clean checkpoint, freeze a new Claude
 host review, and start a fresh Codex review. Never edit the old seal or replay
 old evidence.
 
-## Critical `gpt-5.6-sol` / `ultra` profile fails
+## Critical Codex policy fails
 
 The optional workflow requires this explicit profile for its critical-task Codex
-lane. Confirm `gpt-5.6-sol` is in `CCW_ALLOWED_MODELS` and that the local Codex
-CLI/account supports `ultra`. If the provider rejects it, the job must fail;
+lane. On a legacy no-profile run, confirm `gpt-5.6-sol` is in
+`CCW_ALLOWED_MODELS` and that the local Codex CLI/account supports `ultra`. On a
+profiled run, check the exact non-null `codexPolicy.byRisk.critical` model and
+effort instead. If the provider rejects the selected pair, the job must fail;
 BoundedRelay does not silently downgrade or change the Claude host model.
 
 ## `WORKTREE_DIRTY`

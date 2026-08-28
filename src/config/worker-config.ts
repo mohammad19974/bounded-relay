@@ -2,10 +2,16 @@ import { delimiter, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { ERROR_CODES, WorkerError } from "../core/errors.js";
+import { BOUNDEDRELAY_VERSION } from "../version.js";
 
 export interface WorkerConfig {
   readonly version: string;
+  /** Canonical user-facing Codex command path selected by policy. */
   readonly codexExecutable: string;
+  /** Actual shell-free launcher used when the selected command is a script. */
+  readonly codexLauncherExecutable?: string;
+  /** Immutable arguments placed before every server-owned Codex argument. */
+  readonly codexLauncherArguments?: readonly string[];
   readonly gitExecutable: string;
   readonly allowedRoots: readonly string[];
   readonly allowedModels: readonly string[];
@@ -25,8 +31,6 @@ export interface WorkerConfig {
   readonly gitOperationTimeoutMs: number;
   readonly stateDirectory: string;
 }
-
-const VERSION = "0.1.0";
 
 function parseBoolean(
   value: string | undefined,
@@ -88,7 +92,15 @@ function parseEnvironmentNames(value: string | undefined): readonly string[] {
     }
   }
 
-  return [...new Set(names)];
+  const uniqueNames = [...new Set(names)];
+  if (uniqueNames.length > 32) {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      "CCW_FORWARD_ENV must contain at most 32 unique environment variable names",
+    );
+  }
+
+  return uniqueNames;
 }
 
 function parseAllowedModels(value: string | undefined): readonly string[] {
@@ -162,7 +174,7 @@ export function loadWorkerConfig(
   }
 
   return {
-    version: VERSION,
+    version: BOUNDEDRELAY_VERSION,
     codexExecutable,
     gitExecutable,
     allowedRoots: parseAllowedRoots(

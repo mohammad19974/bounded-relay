@@ -11,6 +11,7 @@ import {
   evidencePath,
   fail,
   hostReviewContextId,
+  optionalProjectProfilePath,
   printSuccess,
   readJson,
   requireSchema,
@@ -28,7 +29,12 @@ function verifyClaude(document, context, runId) {
   assertSafeIdentifier(document.nonce, "plan review nonce");
   assertRevisionEqual(
     document.revision,
-    artifactRevision(context, ["spec.md", "plan.md"]),
+    artifactRevision(
+      context,
+      ["spec.md", "plan.md"],
+      false,
+      projectProfileArtifacts(context),
+    ),
     "plan revision",
   );
   assertReview(
@@ -55,7 +61,12 @@ function verifyComplete(document, context, runId) {
   assertSafeIdentifier(document.nonce, "plan review nonce");
   assertRevisionEqual(
     document.revision,
-    artifactRevision(context, ["spec.md", "plan.md"]),
+    artifactRevision(
+      context,
+      ["spec.md", "plan.md"],
+      false,
+      projectProfileArtifacts(context),
+    ),
     "plan revision",
   );
   assertReview(
@@ -115,6 +126,11 @@ function verifyComplete(document, context, runId) {
   }
 }
 
+function projectProfileArtifacts(context) {
+  const path = optionalProjectProfilePath(context);
+  return path === null ? [] : [path];
+}
+
 try {
   const [action, runId] = process.argv.slice(2);
   if (!new Set(["prepare", "verify-claude", "verify"]).has(action) || !runId) {
@@ -130,7 +146,12 @@ try {
       runId,
       nonce: randomUUID(),
       state: "pending",
-      revision: artifactRevision(context, ["spec.md", "plan.md"]),
+      revision: artifactRevision(
+        context,
+        ["spec.md", "plan.md"],
+        false,
+        projectProfileArtifacts(context),
+      ),
       claudeReview: null,
       codexReview: null,
       reconciliation: null,

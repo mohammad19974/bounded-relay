@@ -57,4 +57,14 @@ examples, and package contents MUST stay aligned. Changes require focused tests,
 the full `npm run check` gate, a real diff review, and a concise handoff.
 Provider credentials and paid model calls MUST NOT be required by CI.
 
-**Version**: 1.2.0 | **Ratified**: 2026-08-27 | **Last amended**: 2026-08-28
+## VIII. Portable Profiles Are Intersection-Only Data
+
+A project profile MAY provide versioned capability evidence, verification
+definitions, Codex-only model requests, and additional write restrictions. It
+MUST be strict, bounded, canonical, and content-addressed. A profile MUST NOT
+launch Claude, select a Claude model, execute its declared check command, load
+code, or expand any server-owned root, model, environment, proposal, path, or
+resource policy. Profiled routing uses a separate public schema and policy
+version; the established no-profile route remains compatible.
+
+**Version**: 1.3.0 | **Ratified**: 2026-08-27 | **Last amended**: 2026-08-28

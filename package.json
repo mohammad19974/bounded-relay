@@ -4,6 +4,14 @@
   "description": "A policy-first Claude Code-to-Codex orchestration boundary with adaptive routing, strict review, live status, and isolated proposals.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohammad19974/bounded-relay.git"
+  },
+  "homepage": "https://github.com/mohammad19974/bounded-relay#readme",
+  "bugs": {
+    "url": "https://github.com/mohammad19974/bounded-relay/issues"
+  },
   "sideEffects": false,
   "bin": {
     "boundedrelay": "./dist/cli.js"
@@ -18,10 +26,13 @@
   },
   "files": [
     "dist",
+    "benchmarks",
     "docs",
+    "!docs/assets/boundedrelay-linkedin-claude-codex.png",
     "examples",
     "integrations",
     "schemas",
+    "scripts/routing-conformance.mjs",
     "README.md",
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
@@ -31,7 +42,7 @@
     "SUPPORT.md"
   ],
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.13.0 || ^24.0.0"
   },
   "keywords": [
     "bounded-relay",
@@ -49,12 +60,15 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run pack:check",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run eval:routing && npm run pack:check",
     "dev": "tsx src/cli.ts serve",
+    "eval": "npm run eval:routing",
+    "eval:routing": "node scripts/routing-conformance.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings 0",
-    "pack:check": "npm pack --dry-run",
+    "pack:check": "node scripts/package-smoke.mjs",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run check",
     "start": "node dist/cli.js serve",
     "test": "vitest run",

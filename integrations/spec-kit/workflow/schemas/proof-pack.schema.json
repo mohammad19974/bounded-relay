@@ -28,18 +28,92 @@
     },
     "state": { "const": "complete" },
     "policy": {
-      "type": "object",
-      "required": [
-        "routingPolicyVersion",
-        "fitPolicyVersion",
-        "planFingerprint"
-      ],
-      "properties": {
-        "routingPolicyVersion": { "const": "sdd-routing-v2" },
-        "fitPolicyVersion": { "const": "sdd-task-fit-v1" },
-        "planFingerprint": { "$ref": "#/$defs/sha256" }
-      },
-      "additionalProperties": false
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "routingPolicyVersion",
+            "fitPolicyVersion",
+            "planFingerprint",
+            "projectProfile",
+            "crossReviewPolicy"
+          ],
+          "properties": {
+            "routingPolicyVersion": { "const": "sdd-routing-v2" },
+            "fitPolicyVersion": { "const": "sdd-task-fit-v1" },
+            "planFingerprint": { "$ref": "#/$defs/sha256" },
+            "projectProfile": { "const": null },
+            "crossReviewPolicy": { "const": null }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "routingPolicyVersion",
+            "fitPolicyVersion",
+            "planFingerprint",
+            "projectProfile",
+            "crossReviewPolicy"
+          ],
+          "properties": {
+            "routingPolicyVersion": { "const": "sdd-routing-v3" },
+            "fitPolicyVersion": { "const": "sdd-capability-fit-v1" },
+            "planFingerprint": { "$ref": "#/$defs/sha256" },
+            "projectProfile": {
+              "type": "object",
+              "required": [
+                "path",
+                "sourceSha256",
+                "profileId",
+                "profileVersion",
+                "profileFingerprint",
+                "checkProfiles"
+              ],
+              "properties": {
+                "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                "sourceSha256": { "$ref": "#/$defs/sha256" },
+                "profileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "profileVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "profileFingerprint": { "$ref": "#/$defs/sha256" },
+                "checkProfiles": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "cwd", "commandSha256"],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "cwd": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "commandSha256": { "$ref": "#/$defs/sha256" }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "crossReviewPolicy": { "$ref": "#/$defs/crossReviewPolicy" }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "routingTotals": { "type": "object" },
     "decisions": {
@@ -167,6 +241,53 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "crossReviewPolicy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "purpose",
+            "model",
+            "reasoningEffort",
+            "serverAllowlistRequired"
+          ],
+          "properties": {
+            "source": { "const": "project-profile" },
+            "purpose": { "const": "cross-review" },
+            "model": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+            },
+            "reasoningEffort": {
+              "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+            },
+            "serverAllowlistRequired": { "const": true }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "purpose",
+            "model",
+            "reasoningEffort",
+            "serverAllowlistRequired"
+          ],
+          "properties": {
+            "source": { "const": "project-profile" },
+            "purpose": { "const": "cross-review" },
+            "model": { "const": null },
+            "reasoningEffort": {
+              "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+            },
+            "serverAllowlistRequired": { "const": false }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "revision": {
       "type": "string",

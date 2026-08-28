@@ -89,6 +89,49 @@ describe("buildChildEnvironment", () => {
     );
     expect(result).toEqual({});
   });
+
+  test("forwards only safe Windows runtime keys with case-insensitive lookup", () => {
+    const result = buildChildEnvironment(
+      {
+        Path: "C:\\Windows\\System32",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        Pathext: ".COM;.EXE;.BAT;.CMD",
+        SystemRoot: "C:\\Windows",
+        UserName: "runner",
+        UserProfile: "C:\\Users\\runner",
+        windir: "C:\\Windows",
+        openai_api_key: "must-not-leak",
+        GITHUB_TOKEN: "must-not-leak-either",
+      },
+      {
+        forwardAuthEnvironment: false,
+        forwardEnvironment: ["openai_api_key"],
+      },
+      "win32",
+    );
+
+    expect(result).toEqual({
+      PATH: "C:\\Windows\\System32",
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      SYSTEMROOT: "C:\\Windows",
+      USERNAME: "runner",
+      USERPROFILE: "C:\\Users\\runner",
+      WINDIR: "C:\\Windows",
+    });
+    expect(result).not.toHaveProperty("OPENAI_API_KEY");
+    expect(result).not.toHaveProperty("GITHUB_TOKEN");
+  });
+
+  test("forwards opted-in auth on Windows under canonical names", () => {
+    expect(
+      buildChildEnvironment(
+        { openai_api_key: "secret" },
+        { forwardAuthEnvironment: true, forwardEnvironment: [] },
+        "win32",
+      ),
+    ).toEqual({ OPENAI_API_KEY: "secret" });
+  });
 });
 
 describe("delegation depth policy", () => {
@@ -142,6 +185,25 @@ describe("Codex invocation and prompt isolation", () => {
       ],
     });
     expect(invocation.args.join(" ")).not.toContain(injection);
+  });
+
+  test("keeps a shell-free launcher prefix ahead of worker-owned Codex arguments", () => {
+    const root = resolve(tmpdir(), "ccw-launcher-invocation");
+    const request = makeRequest(root, { executionRoot: root });
+    const invocation = buildCodexInvocation(request, {
+      codexExecutable: "C:\\npm\\codex.cmd",
+      codexLauncherExecutable: "C:\\Program Files\\nodejs\\node.exe",
+      codexLauncherArguments: [
+        "C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
+      ],
+    });
+
+    expect(invocation.executable).toBe("C:\\Program Files\\nodejs\\node.exe");
+    expect(invocation.args.slice(0, 3)).toEqual([
+      "C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
+      "--strict-config",
+      "--sandbox",
+    ]);
   });
 
   test("adds only typed model and reasoning options for a proposal", () => {

@@ -10,6 +10,12 @@ implemented only when it is present in source, tested, documented, and listed in
 - capabilities and workspace inspection;
 - deterministic `sdd-routing-v2` quality-first task routing with neutral share
   metadata, fingerprints, explanations, and single-writer waves;
+- optional strict portable project profiles through the separate
+  `sdd-routing-v3` path, with capability minimums, intersection-only write
+  policy, required check digests, Codex-only model policy, and unchanged
+  no-profile routing;
+- credential-free deterministic routing conformance fixtures that report policy
+  invariants without provider, quality, speed, token, or cost claims;
 - content-addressed strict/draft SDD review with frozen host evidence, fresh
   structured Codex review, and fail-closed freshness gates;
 - in-memory asynchronous job queue;

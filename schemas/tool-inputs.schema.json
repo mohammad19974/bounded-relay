@@ -43,7 +43,10 @@
       "additionalProperties": false
     },
     "codex_worker_sdd_route": {
-      "$ref": "./sdd/v1/route-input.schema.json"
+      "oneOf": [
+        { "$ref": "./sdd/v1/route-input.schema.json" },
+        { "$ref": "./sdd/v1/profiled-route-input.schema.json" }
+      ]
     },
     "codex_worker_sdd_review": {
       "$ref": "./sdd/v1/review-input.schema.json"

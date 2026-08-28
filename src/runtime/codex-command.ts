@@ -17,9 +17,13 @@ export interface CodexInvocation {
 
 export function buildCodexInvocation(
   request: ResolvedJobRequest,
-  config: Pick<WorkerConfig, "codexExecutable">,
+  config: Pick<
+    WorkerConfig,
+    "codexExecutable" | "codexLauncherExecutable" | "codexLauncherArguments"
+  >,
 ): CodexInvocation {
   const args: string[] = [
+    ...(config.codexLauncherArguments ?? []),
     "--strict-config",
     "--sandbox",
     request.mode === "analyze" ? "read-only" : "workspace-write",
@@ -54,7 +58,7 @@ export function buildCodexInvocation(
   args.push("-");
 
   return {
-    executable: config.codexExecutable,
+    executable: config.codexLauncherExecutable ?? config.codexExecutable,
     args,
     cwd: request.executionRoot,
   };

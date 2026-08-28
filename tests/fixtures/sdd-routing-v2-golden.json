@@ -1,0 +1,68 @@
+{
+  "cases": [
+    {
+      "name": "neutral",
+      "input": {
+        "tasks": [
+          {
+            "id": "a",
+            "effortPoints": 1,
+            "risk": "medium",
+            "authority": "read-only",
+            "kind": "review"
+          },
+          {
+            "id": "b",
+            "effortPoints": 1,
+            "risk": "medium",
+            "authority": "read-only",
+            "kind": "review"
+          },
+          {
+            "id": "c",
+            "effortPoints": 1,
+            "risk": "medium",
+            "authority": "read-only",
+            "kind": "review"
+          }
+        ]
+      },
+      "planFingerprint": "bcd08f5fefac4f7b01618ebca8c2df60be75f1153efd9fbff6a20aad68279a2c",
+      "jsonSha256": "85f8b294990d1890bfaa3553205543559668d3cc28f71af85971f90c0074e71b"
+    },
+    {
+      "name": "mixed",
+      "input": {
+        "neutralCodexShareBps": 6500,
+        "tasks": [
+          {
+            "id": "plan",
+            "effortPoints": 3,
+            "risk": "medium",
+            "authority": "read-only",
+            "kind": "planning"
+          },
+          {
+            "id": "build",
+            "effortPoints": 5,
+            "risk": "medium",
+            "authority": "write",
+            "kind": "implementation",
+            "dependencies": ["plan"],
+            "writeScopes": ["src"]
+          },
+          {
+            "id": "review",
+            "effortPoints": 2,
+            "risk": "medium",
+            "authority": "read-only",
+            "kind": "review",
+            "dependencies": ["build"]
+          }
+        ]
+      },
+      "planFingerprint": "3e24424b25f29aac0a30829f1079341ef93b5681b73afceba51e7c75da3dc866",
+      "jsonSha256": "b6b7d7f193a5ed0f83ea0b86845eba76aff6cd2f41d464a4cda894ef0c58c86a"
+    }
+  ]
+}

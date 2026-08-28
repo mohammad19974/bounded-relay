@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import { TextDecoder } from "node:util";
@@ -7,6 +10,7 @@ import { TextDecoder } from "node:util";
 import {
   artifactRevision,
   artifactRevisionAt,
+  MAX_PROJECT_PROFILE_BYTES,
   assertIsoDate,
   assertJobId,
   assertModel,
@@ -20,6 +24,7 @@ import {
   fail,
   fileDigest,
   hostReviewContextId,
+  optionalProjectProfilePath,
   printSuccess,
   readCommittedRepositoryFile,
   readJson,
@@ -32,8 +37,18 @@ import { assertStrictSddReview } from "./strict-review.mjs";
 const PROVIDERS = new Set(["codex", "claude-host"]);
 const RISKS = new Set(["low", "medium", "high", "critical"]);
 const AUTHORITIES = new Set(["read-only", "write"]);
+const REASONING_EFFORTS = new Set([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
 const ROUTING_POLICY_VERSION = "sdd-routing-v2";
 const FIT_POLICY_VERSION = "sdd-task-fit-v1";
+const PROFILED_ROUTING_POLICY_VERSION = "sdd-routing-v3";
+const PROFILED_FIT_POLICY_VERSION = "sdd-capability-fit-v1";
 const MAX_ROUTED_TASKS = 64;
 const STANDARD_TASK_ID = /^T[0-9]{3,}$/u;
 const TASK_CHECKBOX_LINE = /^\s*-\s+\[[ xX]\](?:\s|$)/u;
@@ -41,6 +56,16 @@ const TASK_CHECKBOX = /^\s*-\s+\[([ xX])\]\s+(\S+)(?:\s|$)/u;
 const SELECTION_ORDER = [
   "hard-eligibility",
   "quality-fit",
+  "preferred-lane-tie-break",
+  "neutral-effort-balance",
+  "neutral-task-count-balance",
+  "odd-neutral-tie-to-codex",
+  "lexical-task-id",
+];
+const PROFILED_SELECTION_ORDER = [
+  "hard-eligibility",
+  "capability-eligibility",
+  "capability-fit",
   "preferred-lane-tie-break",
   "neutral-effort-balance",
   "neutral-task-count-balance",
@@ -73,6 +98,7 @@ function authoritativeRoute(request) {
       encoding: "utf8",
       input: JSON.stringify(request),
       maxBuffer: 2 * 1024 * 1024,
+      timeout: 30_000,
       shell: false,
     },
   );
@@ -86,6 +112,86 @@ function authoritativeRoute(request) {
   } catch {
     fail("the packaged authoritative SDD router returned invalid JSON");
   }
+}
+
+function authoritativeProfile(profile) {
+  const execution = spawnSync(
+    process.execPath,
+    [ROUTER_ENTRY, "profile", "validate"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      input: JSON.stringify(profile),
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 30_000,
+      shell: false,
+    },
+  );
+  if (execution.error || execution.status !== 0) {
+    fail("the configured project_profile is not accepted by BoundedRelay");
+  }
+  let output;
+  try {
+    output = JSON.parse(execution.stdout);
+  } catch {
+    fail("BoundedRelay returned invalid project_profile validation output");
+  }
+  if (
+    output?.valid !== true ||
+    typeof output.profile !== "object" ||
+    output.profile === null
+  ) {
+    fail("BoundedRelay returned incomplete project_profile validation output");
+  }
+  assertSha256(output.profileFingerprint, "project profile fingerprint");
+  return output;
+}
+
+function profileArtifacts(context) {
+  const path = optionalProjectProfilePath(context);
+  return path === null ? [] : [path];
+}
+
+function loadProjectProfile(context, revisionHead) {
+  const path = optionalProjectProfilePath(context);
+  if (path === null) {
+    return null;
+  }
+  const bytes = readCommittedRepositoryFile(
+    context,
+    revisionHead,
+    path,
+    "project profile",
+    MAX_PROJECT_PROFILE_BYTES,
+  );
+  const livePath = resolve(context.projectRoot, ...path.split("/"));
+  const liveBytes = readFileSync(livePath);
+  if (!liveBytes.equals(bytes)) {
+    fail("project_profile changed after its sealed workflow revision");
+  }
+  let source;
+  try {
+    source = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    fail("project_profile is not valid JSON");
+  }
+  const normalized = authoritativeProfile(source);
+  const checkProfiles = normalized.profile.checkProfiles.map((check) => ({
+    id: check.id,
+    cwd: check.cwd,
+    commandSha256: check.commandSha256,
+  }));
+  return {
+    source,
+    binding: {
+      path,
+      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+      profileId: normalized.profile.profileId,
+      profileVersion: normalized.profile.profileVersion,
+      profileFingerprint: normalized.profileFingerprint,
+      checkProfiles,
+    },
+  };
 }
 
 function approvedPlanReview(context, runId, routingRevision) {
@@ -104,6 +210,7 @@ function approvedPlanReview(context, runId, routingRevision) {
     context,
     document.revision?.head,
     ["spec.md", "plan.md"],
+    profileArtifacts(context),
   );
   assertRevisionEqual(
     document.revision,
@@ -116,16 +223,19 @@ function approvedPlanReview(context, runId, routingRevision) {
     routingRevision.head,
     "approved plan to routing checkpoint",
   );
-  const routingPlanArtifacts = routingRevision.artifacts.filter(
-    (artifact) =>
-      artifact.path === `${context.featureDirectory}/spec.md` ||
-      artifact.path === `${context.featureDirectory}/plan.md`,
+  const reviewedPaths = new Set(
+    reviewedRevision.artifacts.map((artifact) => artifact.path),
+  );
+  const routingPlanArtifacts = routingRevision.artifacts.filter((artifact) =>
+    reviewedPaths.has(artifact.path),
   );
   if (
     canonicalDigest(routingPlanArtifacts) !==
     canonicalDigest(reviewedRevision.artifacts)
   ) {
-    fail("spec.md or plan.md changed after the approved plan review");
+    fail(
+      "spec.md or plan.md changed after the approved plan review, or project_profile changed after review",
+    );
   }
   assertReview(
     document.claudeReview,
@@ -252,6 +362,7 @@ function verifyRouterEvidence(
   targetBasisPoints,
   assignments,
   manifest,
+  projectProfile,
 ) {
   if (
     typeof router !== "object" ||
@@ -267,20 +378,58 @@ function verifyRouterEvidence(
     fail("recorded SDD route request does not match the workflow target");
   }
   const result = router.result;
+  const profiled = projectProfile !== null;
   if (
     typeof result !== "object" ||
     result === null ||
-    result.schemaVersion !== 1 ||
-    result.routingPolicyVersion !== ROUTING_POLICY_VERSION ||
-    result.fitPolicyVersion !== FIT_POLICY_VERSION ||
-    canonicalDigest(result.selectionOrder) !==
-      canonicalDigest(SELECTION_ORDER) ||
     !Array.isArray(result.tasks) ||
     !Array.isArray(result.assignments) ||
     !Array.isArray(result.waves) ||
     !Array.isArray(result.reasons)
   ) {
     fail("recorded SDD route result is incomplete");
+  }
+  if (profiled) {
+    if (
+      result.schemaVersion !== 2 ||
+      result.routingPolicyVersion !== PROFILED_ROUTING_POLICY_VERSION ||
+      result.fitPolicyVersion !== PROFILED_FIT_POLICY_VERSION ||
+      canonicalDigest(result.selectionOrder) !==
+        canonicalDigest(PROFILED_SELECTION_ORDER) ||
+      !Array.isArray(result.executors) ||
+      typeof result.crossReviewPolicy !== "object" ||
+      result.crossReviewPolicy === null ||
+      canonicalDigest(router.request.projectProfile) !==
+        canonicalDigest(projectProfile.source) ||
+      canonicalDigest(result.projectProfile) !==
+        canonicalDigest({
+          schemaVersion: 1,
+          profileId: projectProfile.binding.profileId,
+          profileVersion: projectProfile.binding.profileVersion,
+          profileFingerprint: projectProfile.binding.profileFingerprint,
+        })
+    ) {
+      fail("recorded profiled SDD route result is incomplete or stale");
+    }
+    const reviewPolicy = result.crossReviewPolicy;
+    assertModel(reviewPolicy.model ?? null, "profiled cross-review model");
+    if (
+      reviewPolicy.source !== "project-profile" ||
+      reviewPolicy.purpose !== "cross-review" ||
+      reviewPolicy.serverAllowlistRequired !== (reviewPolicy.model !== null) ||
+      (reviewPolicy.reasoningEffort !== null &&
+        !REASONING_EFFORTS.has(reviewPolicy.reasoningEffort))
+    ) {
+      fail("profiled cross-review policy is invalid");
+    }
+  } else if (
+    router.request.projectProfile !== undefined ||
+    result.schemaVersion !== 1 ||
+    result.routingPolicyVersion !== ROUTING_POLICY_VERSION ||
+    result.fitPolicyVersion !== FIT_POLICY_VERSION ||
+    canonicalDigest(result.selectionOrder) !== canonicalDigest(SELECTION_ORDER)
+  ) {
+    fail("recorded legacy SDD route result is incomplete or malformed");
   }
   const expectedTaskIds = manifest.pendingTaskIds;
   for (const [label, taskIds] of [
@@ -300,26 +449,57 @@ function verifyRouterEvidence(
     }
   }
   assertSha256(result.planFingerprint, "SDD route plan fingerprint");
-  const fingerprintPayload = {
-    schemaVersion: result.schemaVersion,
-    routingPolicyVersion: result.routingPolicyVersion,
-    fitPolicyVersion: result.fitPolicyVersion,
-    neutralCodexShareBps: result.balance?.neutralCodexShareBps,
-    selectionOrder: result.selectionOrder,
-    tasks: result.tasks,
-    assignments: result.assignments.map((assignment) => ({
-      taskId: assignment.taskId,
-      lane: assignment.lane,
-      wave: assignment.wave,
-      decisionStage: assignment.decisionStage,
-      laneFit: assignment.laneFit,
-      reasonCodes: Array.isArray(assignment.reasons)
-        ? assignment.reasons.map((reason) => reason.code)
-        : [],
-    })),
-    waves: result.waves,
-    reasonCodes: result.reasons.map((reason) => reason.code),
-  };
+  const fingerprintPayload = profiled
+    ? {
+        schemaVersion: result.schemaVersion,
+        routingPolicyVersion: result.routingPolicyVersion,
+        fitPolicyVersion: result.fitPolicyVersion,
+        selectionOrder: result.selectionOrder,
+        projectProfile: result.projectProfile,
+        executors: result.executors,
+        crossReviewPolicy: result.crossReviewPolicy,
+        neutralCodexShareBps: result.balance?.neutralCodexShareBps,
+        tasks: result.tasks,
+        assignments: result.assignments.map((assignment) => ({
+          taskId: assignment.taskId,
+          lane: assignment.lane,
+          executorId: assignment.executorId,
+          wave: assignment.wave,
+          laneFit: assignment.laneFit,
+          decisionStage: assignment.decisionStage,
+          explicitEligibleLanes: assignment.explicitEligibleLanes,
+          effectiveEligibleLanes: assignment.effectiveEligibleLanes,
+          capabilityRequirements: assignment.capabilityRequirements,
+          capabilityEligibility: assignment.capabilityEligibility,
+          requiredCheckProfiles: assignment.requiredCheckProfiles,
+          codexPolicy: assignment.codexPolicy,
+          reasonCodes: Array.isArray(assignment.reasons)
+            ? assignment.reasons.map((reason) => reason.code)
+            : [],
+        })),
+        waves: result.waves,
+        reasonCodes: result.reasons.map((reason) => reason.code),
+      }
+    : {
+        schemaVersion: result.schemaVersion,
+        routingPolicyVersion: result.routingPolicyVersion,
+        fitPolicyVersion: result.fitPolicyVersion,
+        neutralCodexShareBps: result.balance?.neutralCodexShareBps,
+        selectionOrder: result.selectionOrder,
+        tasks: result.tasks,
+        assignments: result.assignments.map((assignment) => ({
+          taskId: assignment.taskId,
+          lane: assignment.lane,
+          wave: assignment.wave,
+          decisionStage: assignment.decisionStage,
+          laneFit: assignment.laneFit,
+          reasonCodes: Array.isArray(assignment.reasons)
+            ? assignment.reasons.map((reason) => reason.code)
+            : [],
+        })),
+        waves: result.waves,
+        reasonCodes: result.reasons.map((reason) => reason.code),
+      };
   if (canonicalDigest(fingerprintPayload) !== result.planFingerprint) {
     fail("SDD route plan fingerprint does not match the returned plan");
   }
@@ -361,6 +541,73 @@ function verifyRouterEvidence(
       fail(
         `task ${assignment.taskId} does not match the fingerprinted SDD route result`,
       );
+    }
+    if (profiled) {
+      if (
+        !Array.isArray(route.requiredCheckProfiles) ||
+        route.requiredCheckProfiles.length > 64
+      ) {
+        fail(`task ${assignment.taskId} exceeds the workflow check limit`);
+      }
+      const projection = {
+        executorId: route.executorId,
+        capabilityRequirements: route.capabilityRequirements,
+        capabilityEligibility: route.capabilityEligibility,
+        requiredCheckProfiles: route.requiredCheckProfiles,
+        codexPolicy: route.codexPolicy,
+      };
+      const recordedProjection = {
+        executorId: assignment.executorId,
+        capabilityRequirements: assignment.capabilityRequirements,
+        capabilityEligibility: assignment.capabilityEligibility,
+        requiredCheckProfiles: assignment.requiredCheckProfiles,
+        codexPolicy: assignment.codexPolicy,
+      };
+      if (canonicalDigest(recordedProjection) !== canonicalDigest(projection)) {
+        fail(
+          `task ${assignment.taskId} profile projection differs from the authoritative route`,
+        );
+      }
+      const codexModelPolicy = {
+        source: "server-allowlisted",
+        model: route.codexPolicy.model,
+        ...(route.codexPolicy.reasoningEffort === null
+          ? {}
+          : { reasoningEffort: route.codexPolicy.reasoningEffort }),
+      };
+      if (
+        route.codexPolicy.source !== "project-profile" ||
+        route.codexPolicy.purpose !==
+          (assignment.provider === "codex" ? "execution" : "cross-review") ||
+        route.codexPolicy.serverAllowlistRequired !==
+          (route.codexPolicy.model !== null) ||
+        (assignment.provider === "codex"
+          ? canonicalDigest(assignment.modelPolicy) !==
+              canonicalDigest(codexModelPolicy) ||
+            assignment.reviewerModelPolicy !== undefined
+          : canonicalDigest(assignment.modelPolicy) !==
+              canonicalDigest({ source: "host-selected", model: null }) ||
+            canonicalDigest(assignment.reviewerModelPolicy) !==
+              canonicalDigest(codexModelPolicy))
+      ) {
+        fail(
+          `task ${assignment.taskId} model policy differs from its profiled Codex policy`,
+        );
+      }
+      const definedChecks = new Map(
+        projectProfile.binding.checkProfiles.map((check) => [check.id, check]),
+      );
+      for (const required of route.requiredCheckProfiles) {
+        const definition = definedChecks.get(required.id);
+        if (
+          definition === undefined ||
+          canonicalDigest(definition) !== canonicalDigest(required)
+        ) {
+          fail(
+            `task ${assignment.taskId} references an undefined project check profile`,
+          );
+        }
+      }
     }
   }
 }
@@ -409,7 +656,7 @@ function pathsOverlap(left, right) {
   );
 }
 
-function verifyAssignment(assignment, revisionSeal) {
+function verifyAssignment(assignment, revisionSeal, profiled) {
   assertSafeIdentifier(assignment.taskId, "task id");
   if (!PROVIDERS.has(assignment.provider) || !RISKS.has(assignment.risk)) {
     fail(`task ${assignment.taskId} has an invalid provider or risk`);
@@ -484,17 +731,35 @@ function verifyAssignment(assignment, revisionSeal) {
   }
 
   if (assignment.risk === "critical") {
-    const solPolicy =
-      assignment.provider === "codex" ? policy : assignment.reviewerModelPolicy;
-    if (
-      typeof solPolicy !== "object" ||
-      solPolicy.source !== "server-allowlisted" ||
-      solPolicy.model !== "gpt-5.6-sol" ||
-      solPolicy.reasoningEffort !== "ultra"
-    ) {
-      fail(
-        `critical task ${assignment.taskId} requires an allowlisted gpt-5.6-sol ultra lane`,
-      );
+    if (profiled) {
+      const profiledPolicy = assignment.codexPolicy;
+      if (
+        typeof profiledPolicy !== "object" ||
+        profiledPolicy === null ||
+        profiledPolicy.source !== "project-profile" ||
+        profiledPolicy.model === null ||
+        profiledPolicy.reasoningEffort === null ||
+        profiledPolicy.serverAllowlistRequired !== true
+      ) {
+        fail(
+          `critical task ${assignment.taskId} requires its explicit allowlisted project-profile Codex policy`,
+        );
+      }
+    } else {
+      const solPolicy =
+        assignment.provider === "codex"
+          ? policy
+          : assignment.reviewerModelPolicy;
+      if (
+        typeof solPolicy !== "object" ||
+        solPolicy.source !== "server-allowlisted" ||
+        solPolicy.model !== "gpt-5.6-sol" ||
+        solPolicy.reasoningEffort !== "ultra"
+      ) {
+        fail(
+          `legacy critical task ${assignment.taskId} requires an allowlisted gpt-5.6-sol ultra lane`,
+        );
+      }
     }
   }
 }
@@ -507,15 +772,18 @@ try {
   const context = workflowContext(runId);
   const path = evidencePath(context, "routing");
   const codexShare = parseShare(context.inputs.codex_share);
+  const extraArtifacts = profileArtifacts(context);
 
   if (action === "prepare") {
-    const revision = artifactRevision(context, [
-      "spec.md",
-      "plan.md",
-      "tasks.md",
-    ]);
+    const revision = artifactRevision(
+      context,
+      ["spec.md", "plan.md", "tasks.md"],
+      false,
+      extraArtifacts,
+    );
     const planReview = approvedPlanReview(context, runId, revision);
     const manifest = taskManifest(context, revision);
+    const projectProfile = loadProjectProfile(context, revision.head);
     writeJsonAtomic(path, {
       schemaVersion: 1,
       kind: "routing",
@@ -525,6 +793,8 @@ try {
       planReviewSha256: planReview.sha256,
       taskManifest: manifest,
       taskManifestSha256: canonicalDigest(manifest),
+      projectProfile: projectProfile?.binding ?? null,
+      crossReviewPolicy: null,
       target: {
         metric: "fit-neutral-estimated-effort",
         soft: true,
@@ -553,12 +823,18 @@ try {
     }
     const revision =
       action === "verify"
-        ? artifactRevision(context, ["spec.md", "plan.md", "tasks.md"])
-        : artifactRevisionAt(context, document.revision?.head, [
-            "spec.md",
-            "plan.md",
-            "tasks.md",
-          ]);
+        ? artifactRevision(
+            context,
+            ["spec.md", "plan.md", "tasks.md"],
+            false,
+            extraArtifacts,
+          )
+        : artifactRevisionAt(
+            context,
+            document.revision?.head,
+            ["spec.md", "plan.md", "tasks.md"],
+            extraArtifacts,
+          );
     assertRevisionEqual(
       document.revision,
       revision,
@@ -572,6 +848,13 @@ try {
     }
     const manifest = taskManifest(context, revision);
     assertTaskManifest(document, manifest);
+    const projectProfile = loadProjectProfile(context, revision.head);
+    if (
+      canonicalDigest(document.projectProfile ?? null) !==
+      canonicalDigest(projectProfile?.binding ?? null)
+    ) {
+      fail("routing project_profile binding is stale or malformed");
+    }
     if (
       document.target?.metric !== "fit-neutral-estimated-effort" ||
       document.target.soft !== true ||
@@ -589,14 +872,42 @@ try {
       fail("routing assignments must be a bounded non-empty array");
     }
     for (const assignment of document.assignments) {
-      verifyAssignment(assignment, document.revision.seal);
+      verifyAssignment(
+        assignment,
+        document.revision.seal,
+        projectProfile !== null,
+      );
     }
     verifyRouterEvidence(
       document.router,
       codexShare * 100,
       document.assignments,
       manifest,
+      projectProfile,
     );
+    const expectedCrossReviewPolicy =
+      projectProfile === null ? null : document.router.result.crossReviewPolicy;
+    if (
+      canonicalDigest(document.crossReviewPolicy ?? null) !==
+      canonicalDigest(expectedCrossReviewPolicy)
+    ) {
+      fail("routing crossReviewPolicy projection is stale or malformed");
+    }
+    const aggregateRequiredChecks =
+      projectProfile === null
+        ? 0
+        : document.assignments
+            .filter((assignment) => assignment.authority === "write")
+            .reduce(
+              (total, assignment) =>
+                total + assignment.requiredCheckProfiles.length,
+              0,
+            );
+    if (aggregateRequiredChecks > 256) {
+      fail(
+        "profiled routing exceeds the Spec Kit aggregate limit of 256 required writer check receipts",
+      );
+    }
     const taskIds = document.assignments.map((item) => item.taskId);
     if (new Set(taskIds).size !== taskIds.length) {
       fail("routing contains duplicate task ids");
@@ -634,6 +945,18 @@ try {
           );
         }
       }
+    }
+    if (
+      projectProfile !== null &&
+      document.assignments.some(
+        (assignment) =>
+          assignment.authority === "write" &&
+          assignment.writePaths.some((scope) =>
+            pathsOverlap(scope, projectProfile.binding.path),
+          ),
+      )
+    ) {
+      fail("project_profile path must not overlap any writer lease");
     }
     const totalEffort = document.assignments.reduce(
       (sum, item) => sum + item.effort,

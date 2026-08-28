@@ -1,35 +1,37 @@
 # Configuration
 
-BoundedRelay v0.1 reads configuration from environment variables when the
-process starts. There is no project JSON policy file and no runtime tool can
-broaden server policy.
+BoundedRelay v0.1 reads its authoritative server configuration from environment
+variables when the process starts. An optional
+[project profile](project-profiles.md) can add deterministic routing policy and
+restrictions, but it is request data, not server configuration, and no runtime
+tool or profile can broaden server policy.
 
 Use `boundedrelay config` to print effective non-secret configuration and
 `boundedrelay doctor` to verify Codex, Git, login status, and warnings.
 
 ## Complete reference
 
-| Variable                 | Default                                                     | Accepted values                            | Purpose                                                                                                                              |
-| ------------------------ | ----------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `CCW_CODEX_BIN`          | `codex`                                                     | executable name or path                    | Codex CLI executable. It is resolved to a canonical executable file at startup.                                                      |
-| `CCW_GIT_BIN`            | `git`                                                       | executable name or path                    | Git executable. It is resolved at startup.                                                                                           |
-| `CCW_ALLOWED_ROOTS`      | `CLAUDE_PROJECT_DIR`, then process cwd                      | platform path-delimited directories        | Specific project roots the worker may enter. `:` separates paths on POSIX; `;` on Windows.                                           |
-| `CCW_ALLOWED_MODELS`     | empty                                                       | comma-separated model identifiers          | Models callers may explicitly request. Empty means callers must omit `model` and Codex uses its effective default.                   |
-| `CCW_ENABLE_PROPOSALS`   | `false`                                                     | boolean                                    | Register `codex_worker_propose`.                                                                                                     |
-| `CCW_FORWARD_AUTH_ENV`   | `false`                                                     | boolean                                    | Forward known provider-token environment variables to Codex.                                                                         |
-| `CCW_FORWARD_ENV`        | empty                                                       | comma-separated environment variable names | Forward additional named variables; values are never printed by config tools.                                                        |
-| `CCW_MAX_CONCURRENT`     | `2`                                                         | integer `1..8`                             | Maximum active Codex jobs in one server process.                                                                                     |
-| `CCW_MAX_QUEUED`         | `32`                                                        | integer `1..256`                           | Maximum queued jobs.                                                                                                                 |
-| `CCW_MAX_HISTORY`        | `100`                                                       | integer `10..1000`                         | Target in-memory history bound. Terminal jobs are evicted oldest first; active jobs are never evicted and can temporarily exceed it. |
-| `CCW_MAX_TASK_CHARS`     | `20000`                                                     | integer `100..100000`                      | Task-text length limit.                                                                                                              |
-| `CCW_MAX_OUTPUT_BYTES`   | `1000000`                                                   | integer `16384..10000000`                  | Combined Codex stdout/stderr byte limit per job.                                                                                     |
-| `CCW_MAX_PATCH_BYTES`    | `2000000`                                                   | integer `16384..20000000`                  | Maximum returned proposal patch size.                                                                                                |
-| `CCW_MAX_CHANGED_FILES`  | `100`                                                       | integer `1..1000`                          | Proposal changed-file limit and maximum write-path entries accepted by the tool schema.                                              |
-| `CCW_DEFAULT_TIMEOUT_MS` | `1200000`                                                   | integer `1000..3600000`                    | Timeout used when a job omits `timeoutMs`.                                                                                           |
-| `CCW_MAX_TIMEOUT_MS`     | `1800000`                                                   | integer `1000..7200000`                    | Highest timeout accepted from a caller. Must be at least the default timeout.                                                        |
-| `CCW_CANCEL_GRACE_MS`    | `3000`                                                      | integer `100..30000`                       | Grace between process-tree termination and forced kill.                                                                              |
-| `CCW_GIT_TIMEOUT_MS`     | `30000`                                                     | integer `1000..300000`                     | Timeout for each worker-owned Git operation.                                                                                         |
-| `CCW_STATE_DIR`          | `$XDG_RUNTIME_DIR/boundedrelay-<uid>` or OS temp equivalent | specific directory path                    | Transient proposal/strict-review clones and proposal lease metadata only. Not a job database.                                        |
+| Variable                 | Default                                                     | Accepted values                            | Purpose                                                                                                                                           |
+| ------------------------ | ----------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CCW_CODEX_BIN`          | `codex`                                                     | executable name or path                    | Codex CLI command. It is canonicalized at startup; Windows supports native executables and the standard `@openai/codex` npm shim without a shell. |
+| `CCW_GIT_BIN`            | `git`                                                       | executable name or path                    | Git executable. It is resolved at startup.                                                                                                        |
+| `CCW_ALLOWED_ROOTS`      | `CLAUDE_PROJECT_DIR`, then process cwd                      | platform path-delimited directories        | Specific project roots the worker may enter. `:` separates paths on POSIX; `;` on Windows.                                                        |
+| `CCW_ALLOWED_MODELS`     | empty                                                       | comma-separated model identifiers          | Models callers may explicitly request. Empty means callers must omit `model` and Codex uses its effective default.                                |
+| `CCW_ENABLE_PROPOSALS`   | `false`                                                     | boolean                                    | Register `codex_worker_propose`.                                                                                                                  |
+| `CCW_FORWARD_AUTH_ENV`   | `false`                                                     | boolean                                    | Forward known provider-token environment variables to Codex.                                                                                      |
+| `CCW_FORWARD_ENV`        | empty                                                       | comma-separated environment variable names | Forward additional named variables; values are never printed by config tools.                                                                     |
+| `CCW_MAX_CONCURRENT`     | `2`                                                         | integer `1..8`                             | Maximum active Codex jobs in one server process.                                                                                                  |
+| `CCW_MAX_QUEUED`         | `32`                                                        | integer `1..256`                           | Maximum queued jobs.                                                                                                                              |
+| `CCW_MAX_HISTORY`        | `100`                                                       | integer `10..1000`                         | Target in-memory history bound. Terminal jobs are evicted oldest first; active jobs are never evicted and can temporarily exceed it.              |
+| `CCW_MAX_TASK_CHARS`     | `20000`                                                     | integer `100..100000`                      | Task-text length limit.                                                                                                                           |
+| `CCW_MAX_OUTPUT_BYTES`   | `1000000`                                                   | integer `16384..10000000`                  | Combined Codex stdout/stderr byte limit per job.                                                                                                  |
+| `CCW_MAX_PATCH_BYTES`    | `2000000`                                                   | integer `16384..20000000`                  | Maximum returned proposal patch size.                                                                                                             |
+| `CCW_MAX_CHANGED_FILES`  | `100`                                                       | integer `1..1000`                          | Proposal changed-file limit and maximum write-path entries accepted by the tool schema.                                                           |
+| `CCW_DEFAULT_TIMEOUT_MS` | `1200000`                                                   | integer `1000..3600000`                    | Timeout used when a job omits `timeoutMs`.                                                                                                        |
+| `CCW_MAX_TIMEOUT_MS`     | `1800000`                                                   | integer `1000..7200000`                    | Highest timeout accepted from a caller. Must be at least the default timeout.                                                                     |
+| `CCW_CANCEL_GRACE_MS`    | `3000`                                                      | integer `100..30000`                       | Grace between process-tree termination and forced kill.                                                                                           |
+| `CCW_GIT_TIMEOUT_MS`     | `30000`                                                     | integer `1000..300000`                     | Timeout for each worker-owned Git operation.                                                                                                      |
+| `CCW_STATE_DIR`          | `$XDG_RUNTIME_DIR/boundedrelay-<uid>` or OS temp equivalent | specific directory path                    | Transient proposal/strict-review clones and proposal lease metadata only. Not a job database.                                                     |
 
 Boolean values accept `1`, `true`, `yes`, `on`, `0`, `false`, `no`, and `off`,
 case-insensitively.
@@ -110,6 +112,23 @@ With `ultra`, the worker prompt permits Codex-managed read-only internal
 subagents inside the same invocation, sandbox, authority, and path boundary. The
 parent Codex invocation remains the only proposal writer. Cross-provider or
 nested BoundedRelay delegation remains prohibited.
+
+### Project-profile intersection
+
+A portable project profile may resolve an exact Codex model/reasoning policy by
+risk, task kind, or default. That value is only a request within the configured
+boundary:
+
+- a non-null model must appear in `CCW_ALLOWED_MODELS`;
+- the profile cannot add a Claude model or change the current Claude Code host;
+- the profile cannot change `CCW_ALLOWED_ROOTS`, proposal enablement,
+  environment forwarding, timeouts, or resource limits; and
+- an unavailable critical profile fails rather than silently falling back.
+
+Profile validation proves structure and computes a content fingerprint. It does
+not prove account availability or authorize execution. Read the complete
+[project-profile guide](project-profiles.md) before accepting profile data from
+a repository.
 
 ## Authentication and child environment
 

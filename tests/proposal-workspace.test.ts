@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { ERROR_CODES } from "../src/core/errors.js";
-import { GitClient } from "../src/runtime/git-client.js";
+import { GitClient, type GitResult } from "../src/runtime/git-client.js";
 import { ProposalWorkspace } from "../src/runtime/proposal-workspace.js";
 import {
   createTestRepository,
@@ -15,6 +15,20 @@ import {
 } from "./helpers.js";
 
 const cleanupPaths: string[] = [];
+
+class RecordingGitClient extends GitClient {
+  readonly calls: { readonly cwd: string; readonly args: readonly string[] }[] =
+    [];
+
+  public override async run(
+    cwd: string,
+    args: readonly string[],
+    acceptedExitCodes: readonly number[] = [0],
+  ): Promise<GitResult> {
+    this.calls.push({ cwd, args: [...args] });
+    return await super.run(cwd, args, acceptedExitCodes);
+  }
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -50,6 +64,49 @@ async function makeHarness(
 }
 
 describe("ProposalWorkspace", () => {
+  test("uses the Windows null device for checkout and persisted hook isolation", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+    });
+    const git = new RecordingGitClient(config);
+    const workspace = new ProposalWorkspace(config, git, "win32");
+    await workspace.initialize();
+
+    const prepared = await workspace.prepare(
+      makeRequest(repository.root, {
+        mode: "proposal",
+        expectedRevision: repository.revision,
+        writePaths: ["src"],
+      }),
+    );
+
+    const checkout = git.calls.find((call) => call.args.includes("checkout"));
+    expect(checkout?.args).toContain("core.hooksPath=NUL");
+    expect(git.calls.map((call) => call.args)).toContainEqual([
+      "config",
+      "--local",
+      "core.hooksPath",
+      "NUL",
+    ]);
+    expect(
+      (
+        await runGit(prepared.request.executionRoot, [
+          "config",
+          "--local",
+          "--get",
+          "core.hooksPath",
+        ])
+      ).trim(),
+    ).toBe("NUL");
+    await prepared.cleanup();
+  });
+
   test("creates a clean revision-pinned clone and returns a validated allowed patch", async () => {
     const { repository, workspace } = await makeHarness();
     const prepared = await workspace.prepare(
@@ -307,5 +364,5 @@ describe("ProposalWorkspace", () => {
       code: ERROR_CODES.PATCH_LIMIT_EXCEEDED,
     });
     await patchPrepared.cleanup();
-  });
+  }, 30_000);
 });

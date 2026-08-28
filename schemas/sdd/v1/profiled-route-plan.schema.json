@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/sdd/v1/profiled-route-plan.schema.json",
+  "title": "BoundedRelay capability-profiled SDD routing plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "routingPolicyVersion",
+    "fitPolicyVersion",
+    "selectionOrder",
+    "projectProfile",
+    "executors",
+    "crossReviewPolicy",
+    "planFingerprint",
+    "reasons",
+    "tasks",
+    "assignments",
+    "waves",
+    "balance"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "routingPolicyVersion": { "const": "sdd-routing-v3" },
+    "fitPolicyVersion": { "const": "sdd-capability-fit-v1" },
+    "selectionOrder": {
+      "const": [
+        "hard-eligibility",
+        "capability-eligibility",
+        "capability-fit",
+        "preferred-lane-tie-break",
+        "neutral-effort-balance",
+        "neutral-task-count-balance",
+        "odd-neutral-tie-to-codex",
+        "lexical-task-id"
+      ]
+    },
+    "projectProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "profileId",
+        "profileVersion",
+        "profileFingerprint"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "profileId": { "$ref": "#/$defs/id" },
+        "profileVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+        },
+        "profileFingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "executors": {
+      "const": [
+        {
+          "id": "claude-host",
+          "lane": "claude-host",
+          "role": "host-orchestrator",
+          "adapter": "claude-code",
+          "transport": "host-managed",
+          "modelSource": "host-selected",
+          "launchedByWorker": false
+        },
+        {
+          "id": "codex-worker",
+          "lane": "codex",
+          "role": "bounded-worker",
+          "adapter": "codex-exec-jsonl",
+          "transport": "boundedrelay-mcp-stdio",
+          "modelSource": "server-allowlisted",
+          "launchedByWorker": true
+        }
+      ]
+    },
+    "crossReviewPolicy": { "$ref": "#/$defs/crossReviewPolicy" },
+    "planFingerprint": { "$ref": "#/$defs/sha256" },
+    "reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reason" }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "allOf": [
+          { "$ref": "./route-input.schema.json#/$defs/task" },
+          {
+            "type": "object",
+            "required": ["dependencies", "writeScopes", "eligibleLanes"]
+          }
+        ]
+      }
+    },
+    "assignments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/assignment" }
+    },
+    "waves": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/wave" }
+    },
+    "balance": { "$ref": "#/$defs/balance" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "lane": { "enum": ["codex", "claude-host"] },
+    "laneIntegerTotals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codex", "claude-host"],
+      "properties": {
+        "codex": { "type": "integer", "minimum": 0 },
+        "claude-host": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "laneBooleans": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codex", "claude-host"],
+      "properties": {
+        "codex": { "type": "boolean" },
+        "claude-host": { "type": "boolean" }
+      }
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "lane",
+        "role",
+        "adapter",
+        "transport",
+        "modelSource",
+        "launchedByWorker"
+      ],
+      "properties": {
+        "id": { "enum": ["claude-host", "codex-worker"] },
+        "lane": { "$ref": "#/$defs/lane" },
+        "role": { "enum": ["host-orchestrator", "bounded-worker"] },
+        "adapter": { "enum": ["claude-code", "codex-exec-jsonl"] },
+        "transport": {
+          "enum": ["host-managed", "boundedrelay-mcp-stdio"]
+        },
+        "modelSource": {
+          "enum": ["host-selected", "server-allowlisted"]
+        },
+        "launchedByWorker": { "type": "boolean" }
+      }
+    },
+    "reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "HARD_ELIGIBILITY",
+            "CAPABILITY_ELIGIBILITY",
+            "CAPABILITY_FIT_SELECTED",
+            "PREFERRED_LANE_TIE_BREAK",
+            "PREFERRED_LANE_INELIGIBLE",
+            "PREFERRED_LANE_OVERRIDDEN_BY_FIT",
+            "NEUTRAL_EFFORT_BALANCE",
+            "NEUTRAL_TASK_COUNT_BALANCE",
+            "ODD_NEUTRAL_TIE_TO_CODEX",
+            "LEXICAL_TIE_BREAK",
+            "SINGLE_WRITER_WAVE",
+            "REQUIRED_CHECK_PROFILES"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "checkRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "cwd", "commandSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "commandSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "codexPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "purpose",
+        "model",
+        "reasoningEffort",
+        "serverAllowlistRequired"
+      ],
+      "properties": {
+        "source": { "const": "project-profile" },
+        "purpose": { "enum": ["execution", "cross-review"] },
+        "model": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "reasoningEffort": {
+          "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+        },
+        "serverAllowlistRequired": { "type": "boolean" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "model": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+            },
+            "serverAllowlistRequired": { "const": true }
+          }
+        },
+        {
+          "properties": {
+            "model": { "const": null },
+            "serverAllowlistRequired": { "const": false }
+          }
+        }
+      ]
+    },
+    "crossReviewPolicy": {
+      "allOf": [
+        { "$ref": "#/$defs/codexPolicy" },
+        {
+          "type": "object",
+          "properties": { "purpose": { "const": "cross-review" } }
+        }
+      ]
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "lane",
+        "executorId",
+        "wave",
+        "selectedFitScore",
+        "laneFit",
+        "decisionStage",
+        "explicitEligibleLanes",
+        "effectiveEligibleLanes",
+        "capabilityRequirements",
+        "capabilityEligibility",
+        "requiredCheckProfiles",
+        "codexPolicy",
+        "reasons"
+      ],
+      "properties": {
+        "taskId": { "$ref": "#/$defs/id" },
+        "lane": { "$ref": "#/$defs/lane" },
+        "executorId": { "enum": ["claude-host", "codex-worker"] },
+        "wave": { "type": "integer", "minimum": 1 },
+        "selectedFitScore": { "type": "integer", "minimum": 0 },
+        "alternateFitScore": { "type": "integer", "minimum": 0 },
+        "laneFit": { "$ref": "#/$defs/laneIntegerTotals" },
+        "decisionStage": {
+          "enum": [
+            "hard-eligibility",
+            "capability-eligibility",
+            "capability-fit",
+            "preferred-lane-tie-break",
+            "neutral-balance"
+          ]
+        },
+        "explicitEligibleLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/lane" }
+        },
+        "effectiveEligibleLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/lane" }
+        },
+        "capabilityRequirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "./project-profile.schema.json#/$defs/capabilityRequirement"
+          }
+        },
+        "capabilityEligibility": { "$ref": "#/$defs/laneBooleans" },
+        "requiredCheckProfiles": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/checkRequirement" }
+        },
+        "codexPolicy": { "$ref": "#/$defs/codexPolicy" },
+        "reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reason" }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "lane": { "const": "codex" },
+            "executorId": { "const": "codex-worker" },
+            "codexPolicy": {
+              "allOf": [
+                { "$ref": "#/$defs/codexPolicy" },
+                {
+                  "type": "object",
+                  "properties": { "purpose": { "const": "execution" } }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "lane": { "const": "claude-host" },
+            "executorId": { "const": "claude-host" },
+            "codexPolicy": {
+              "allOf": [
+                { "$ref": "#/$defs/codexPolicy" },
+                {
+                  "type": "object",
+                  "properties": {
+                    "purpose": { "const": "cross-review" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "wave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wave", "taskIds"],
+      "properties": {
+        "wave": { "type": "integer", "minimum": 1 },
+        "taskIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "writerTaskId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "neutralCodexShareBps",
+        "actualCodexShareBps",
+        "absoluteEffortDeviationBps",
+        "totalEffortPoints",
+        "effortPoints",
+        "taskCount",
+        "totalWeightedFitScore",
+        "decisionCounts",
+        "deviations"
+      ],
+      "properties": {
+        "neutralCodexShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "actualCodexShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "absoluteEffortDeviationBps": { "type": "integer", "minimum": 0 },
+        "totalEffortPoints": { "type": "integer", "minimum": 1 },
+        "effortPoints": { "$ref": "#/$defs/laneIntegerTotals" },
+        "taskCount": { "$ref": "#/$defs/laneIntegerTotals" },
+        "totalWeightedFitScore": { "type": "integer", "minimum": 0 },
+        "decisionCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "hard-eligibility",
+            "capability-eligibility",
+            "capability-fit",
+            "preferred-lane-tie-break",
+            "neutral-balance"
+          ],
+          "properties": {
+            "hard-eligibility": { "type": "integer", "minimum": 0 },
+            "capability-eligibility": { "type": "integer", "minimum": 0 },
+            "capability-fit": { "type": "integer", "minimum": 0 },
+            "preferred-lane-tie-break": { "type": "integer", "minimum": 0 },
+            "neutral-balance": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "deviations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "enum": [
+                  "HARD_ELIGIBILITY",
+                  "CAPABILITY_ELIGIBILITY",
+                  "CAPABILITY_FIT_POLICY",
+                  "EFFORT_GRANULARITY"
+                ]
+              },
+              "message": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

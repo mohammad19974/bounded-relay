@@ -12,8 +12,9 @@ plan, source, Git state, or an external system.
 
 ## `phase=claude`
 
-1. Read the pending evidence, its `revision.seal`, and the active `spec.md` and
-   `plan.md`.
+1. Read the pending evidence, its `revision.seal`, and every exact path in
+   `revision.artifacts`. This is `spec.md` and `plan.md`, plus the configured
+   `project_profile` when present.
 2. Review requirement coverage, architecture, security, compatibility,
    ownership, rollback, and verification yourself. Do not call BoundedRelay or
    read Codex output during this phase.
@@ -35,12 +36,13 @@ Proceed only after the engine has verified `claude-frozen` evidence.
 2. Call `codex_worker_workspace`; strict review stops unless the tree is clean
    and its full revision equals `revision.head`.
 3. Submit exactly one `codex_worker_sdd_review` with `phase: plan`,
-   `mode: strict`, the exact artifact paths, `expectedRevision`, and the
-   already-frozen host evidence. Do not use `codex_worker_analyze` as a
-   strict-gate substitute. Do not include Claude findings in `focus` or any
-   Codex prompt; BoundedRelay accepts host evidence for the gate but keeps it
-   out of the Codex reviewer prompt. Omit `model` to use server policy unless an
-   allowlisted profile is explicitly required.
+   `mode: strict`, every exact sealed artifact path (including a configured
+   project profile), `expectedRevision`, and the already-frozen host evidence.
+   Do not use `codex_worker_analyze` as a strict-gate substitute. Do not include
+   Claude findings in `focus` or any Codex prompt; BoundedRelay accepts host
+   evidence for the gate but keeps it out of the Codex reviewer prompt. Omit
+   `model` to use server policy unless an allowlisted profile is explicitly
+   required.
 4. Poll `codex_worker_status` with bounded waits and `afterRevision`, then
    retrieve the result once.
 5. Re-resolve the workspace. Reject the result if HEAD or the reviewed artifacts

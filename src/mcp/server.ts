@@ -7,14 +7,21 @@ import { JOB_STATUSES, REASONING_EFFORTS } from "../core/types.js";
 import { ERROR_CODES, WorkerError, toWorkerError } from "../core/errors.js";
 import type { WorkerApplication } from "../worker-application.js";
 import {
-  ROUTING_LANES,
-  TASK_AUTHORITIES,
-  TASK_KINDS,
-  TASK_RISKS,
+  SDD_CAPABILITY_FIT_POLICY_VERSION,
+  SDD_FIT_POLICY_VERSION,
+  SDD_PROFILED_ROUTING_POLICY_VERSION,
+  SDD_ROUTING_POLICY_VERSION,
   SddRoutingError,
+  routeProfiledSddTasks,
   routeSddTasks,
+  type ProfiledSddRoutingPlan,
+  type SddProjectProfileInput,
 } from "../sdd/routing/index.js";
 import { REVIEW_PHASES } from "../sdd/review/index.js";
+import {
+  profiledRoutingTaskSchema,
+  projectProfileSchema,
+} from "./project-profile-schema.js";
 
 export interface RunningMcpServer {
   close(): Promise<void>;
@@ -77,6 +84,18 @@ export async function startMcpServer(
           ...health,
           transport: "stdio",
           persistence: "process-lifetime memory only",
+          routingPolicies: {
+            legacy: {
+              routingPolicyVersion: SDD_ROUTING_POLICY_VERSION,
+              fitPolicyVersion: SDD_FIT_POLICY_VERSION,
+            },
+            profiled: {
+              routingPolicyVersion: SDD_PROFILED_ROUTING_POLICY_VERSION,
+              fitPolicyVersion: SDD_CAPABILITY_FIT_POLICY_VERSION,
+              projectProfileSchemaVersion: 1,
+              modelPolicy: "Codex only; server allowlist required",
+            },
+          },
           proposalSemantics:
             "isolated clone -> validated patch -> caller review; never auto-applied",
           tools: [
@@ -122,37 +141,11 @@ export async function startMcpServer(
     {
       title: "Route approved SDD tasks",
       description:
-        "Deterministically route a bounded task DAG by hard eligibility and versioned task fit, using the configured Codex effort share only for fit-neutral tasks. No model is called and no file is changed.",
+        "Deterministically route a bounded task DAG. Without projectProfile it preserves legacy task-kind fit; with a strict profile it uses capability fit, narrower write policy, required check digests, and Codex-only model policy. No model is called and no file is changed.",
       inputSchema: {
-        tasks: z
-          .array(
-            z
-              .object({
-                id: z.string().min(1).max(64),
-                effortPoints: z.number().int().min(1).max(100),
-                risk: z.enum(TASK_RISKS),
-                authority: z.enum(TASK_AUTHORITIES),
-                kind: z.enum(TASK_KINDS),
-                dependencies: z
-                  .array(z.string().min(1).max(64))
-                  .max(64)
-                  .optional(),
-                writeScopes: z
-                  .array(z.string().min(1).max(4_096))
-                  .max(64)
-                  .optional(),
-                eligibleLanes: z
-                  .array(z.enum(ROUTING_LANES))
-                  .min(1)
-                  .max(2)
-                  .optional(),
-                preferredLane: z.enum(ROUTING_LANES).optional(),
-              })
-              .strict(),
-          )
-          .min(1)
-          .max(64),
+        tasks: z.array(profiledRoutingTaskSchema).min(1).max(64),
         neutralCodexShareBps: z.number().int().min(0).max(10_000).optional(),
+        projectProfile: projectProfileSchema.optional(),
       },
       annotations: {
         readOnlyHint: true,
@@ -164,7 +157,7 @@ export async function startMcpServer(
     async (input) =>
       await safeResult(async () => {
         try {
-          return routeSddTasks({
+          const request = {
             tasks: input.tasks.map((task) => ({
               id: task.id,
               effortPoints: task.effortPoints,
@@ -187,7 +180,16 @@ export async function startMcpServer(
             ...(input.neutralCodexShareBps === undefined
               ? {}
               : { neutralCodexShareBps: input.neutralCodexShareBps }),
+          };
+          if (input.projectProfile === undefined) {
+            return routeSddTasks(request);
+          }
+          const plan = routeProfiledSddTasks({
+            ...request,
+            projectProfile: input.projectProfile as SddProjectProfileInput,
           });
+          assertProfiledModelsAllowed(plan, application.config.allowedModels);
+          return plan;
         } catch (error) {
           if (error instanceof SddRoutingError) {
             throw new WorkerError(ERROR_CODES.INVALID_REQUEST, error.message);
@@ -245,7 +247,7 @@ export async function startMcpServer(
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: false,
-        openWorldHint: false,
+        openWorldHint: true,
       },
     },
     async (input) =>
@@ -307,7 +309,7 @@ export async function startMcpServer(
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: false,
-        openWorldHint: false,
+        openWorldHint: true,
       },
     },
     async (input) =>
@@ -351,7 +353,7 @@ export async function startMcpServer(
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
-          openWorldHint: false,
+          openWorldHint: true,
         },
       },
       async (input) =>
@@ -476,6 +478,28 @@ export async function startMcpServer(
       await server.close();
     },
   };
+}
+
+function assertProfiledModelsAllowed(
+  plan: ProfiledSddRoutingPlan,
+  allowedModels: readonly string[],
+): void {
+  const allowed = new Set(allowedModels);
+  const requested = [
+    ...new Set(
+      [
+        plan.crossReviewPolicy.model,
+        ...plan.assignments.map((assignment) => assignment.codexPolicy.model),
+      ].filter((model): model is string => model !== null),
+    ),
+  ];
+  const refused = requested.find((model) => !allowed.has(model));
+  if (refused !== undefined) {
+    throw new WorkerError(
+      ERROR_CODES.INVALID_REQUEST,
+      `Project profile Codex model is not server-allowlisted: ${refused}`,
+    );
+  }
 }
 
 function presentJobResult(result: JobResult, includePatch: boolean): unknown {

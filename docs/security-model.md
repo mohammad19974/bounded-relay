@@ -24,6 +24,8 @@ Codex and the operating system, and what remains the user's responsibility.
   through MCP.
 - task-graph metadata, effort estimates, host review evidence, reviewed
   artifacts, and run-local workflow evidence.
+- project-profile content, including capability scores, write restrictions,
+  check definitions, and requested Codex policy.
 
 The task body supplies an objective only. The worker-generated prompt places
 authority and hard constraints outside that body; task text cannot enable
@@ -75,6 +77,31 @@ Routing never grants execution authority. A `codex` write assignment must still
 use the isolated proposal path, and the `claude-host` coordinator remains
 responsible for honoring its assigned scope. Each returned wave contains at most
 one writer; unrelated programs are outside that cooperative schedule.
+
+### Project profiles
+
+Portable project profiles are strict non-executable routing data. They are
+untrusted until the operator reviews them. Unknown fields, unsafe paths,
+unbounded values, duplicate path entries, and invalid check descriptors fail
+closed. A task scope that overlaps an additional denied root is refused during
+routing.
+
+Profile authority is intersection-only. A profile cannot enable proposals,
+expand allowed roots or task write scopes, relax protected server paths, forward
+environment data, raise limits, select a Claude model, or bypass the server's
+Codex model allowlist. Hard task eligibility precedes capability fit, and
+profile write policy only narrows task-declared scopes.
+
+A check profile may hold bounded argument-vector and repository-relative
+working-directory data so later receipts can match a canonical command digest.
+Validation and routing never run those arguments, invoke a shell, load a module,
+read a repository, or access the network. Reviewing and executing a check
+remains a separate coordinator action.
+
+The profile fingerprint and profiled route fingerprint are SHA-256 content
+addresses. They show equality of canonical policy content, not author identity,
+approval, safety, or execution. See the detailed
+[project-profile guide](project-profiles.md).
 
 ### SDD review
 

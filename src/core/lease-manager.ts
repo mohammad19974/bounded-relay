@@ -4,6 +4,13 @@ import { resolve } from "node:path";
 
 import { ERROR_CODES, WorkerError } from "./errors.js";
 
+export const LEASE_CLEANUP_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 3,
+  retryDelay: 100,
+} as const;
+
 interface LeaseOwner {
   readonly schemaVersion: 1;
   readonly jobId: string;
@@ -58,7 +65,7 @@ export class LeaseManager {
               return;
             }
             released = true;
-            await rm(lockDirectory, { recursive: true, force: true });
+            await rm(lockDirectory, LEASE_CLEANUP_OPTIONS);
           },
         };
       } catch (error) {
@@ -70,7 +77,7 @@ export class LeaseManager {
           const staleDirectory = `${lockDirectory}.stale-${randomUUID()}`;
           try {
             await rename(lockDirectory, staleDirectory);
-            await rm(staleDirectory, { recursive: true, force: true });
+            await rm(staleDirectory, LEASE_CLEANUP_OPTIONS);
             continue;
           } catch {
             // Another process may have recovered or replaced the lock.

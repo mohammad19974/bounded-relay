@@ -250,8 +250,8 @@ A host model label is optional host-declared metadata, not a verified identity.
 
 Codex model overrides remain server-owned and explicit. Omit `model` to use the
 worker's Codex default, or list exact allowed values in `CCW_ALLOWED_MODELS`.
-The packaged critical-task evidence policy requires an independent reviewer from
-the other provider and one Codex lane configured as:
+The legacy no-profile critical-task evidence policy requires an independent
+reviewer from the other provider and one Codex lane configured as:
 
 ```json
 {
@@ -261,12 +261,13 @@ the other provider and one Codex lane configured as:
 }
 ```
 
-This profile must be explicitly allowlisted and available to the local Codex
-CLI/account. If it is unavailable or rejected, stop and report the blocker. The
-workflow does not downgrade the model or effort and does not replace the user's
-Claude model. In particular, a critical task assigned to `claude-host` forces
-the Codex implementation/convergence cross-review policy to this `gpt-5.6-sol` /
-`ultra` profile.
+This legacy policy must be explicitly allowlisted and available to the local
+Codex CLI/account. A project profile instead supplies its exact non-null
+`codexPolicy.byRisk.critical` model and effort. Its profiled route fingerprints
+one global cross-review policy resolved from the highest task risk with
+`risk -> review kind -> default` precedence. If the selected policy is
+unavailable or rejected, stop and report the blocker; the workflow never
+downgrades it or replaces the user's Claude model.
 
 ## Strict dual-review contract
 
@@ -340,7 +341,10 @@ canonical contiguous waves. Execution follows these enforced rules:
    name the exact checkpoint tree. Raw output, environment values, credentials,
    and tokens are excluded. These are redacted coordinator-attested digest
    records, not signed CI attestations, and they do not independently prove
-   command execution.
+   command execution. Each writer may record at most 64 receipts, and execution
+   accepts at most 256 writer receipts across the whole run, including optional
+   profile-defined receipts. The wave that would add receipt 257 is rejected
+   before checkpoint creation and implementation review.
 7. The human gate inspects the wave. If it wrote code, the human authorizes one
    non-merge commit whose sole parent is the active baseline; a read-only wave
    keeps the baseline revision unchanged. Wave verification requires a clean

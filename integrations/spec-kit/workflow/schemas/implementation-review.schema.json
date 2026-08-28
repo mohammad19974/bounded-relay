@@ -51,7 +51,8 @@
         "reason": {
           "enum": [
             "server-default-independent-review",
-            "critical-cross-provider-review"
+            "critical-cross-provider-review",
+            "project-profile-cross-review"
           ]
         }
       },

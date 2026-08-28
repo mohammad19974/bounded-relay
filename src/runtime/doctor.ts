@@ -3,39 +3,60 @@ import { execFile } from "node:child_process";
 import type { WorkerConfig } from "../config/worker-config.js";
 import type { WorkerHealth } from "../core/types.js";
 import { buildChildEnvironment } from "../security/environment-policy.js";
+import { redactKnownValues } from "../security/redaction-policy.js";
 
 interface ProbeResult {
   readonly ok: boolean;
   readonly output: string;
+  readonly requiredTextPresent: boolean;
 }
+
+const MAX_PROBE_OUTPUT_BYTES = 64 * 1024;
 
 export async function collectWorkerHealth(
   config: WorkerConfig,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<WorkerHealth> {
   const childEnvironment = buildChildEnvironment(environment, config);
+  const codexLauncher =
+    config.codexLauncherExecutable ?? config.codexExecutable;
+  const codexArguments = config.codexLauncherArguments ?? [];
+  const probeCodex = async (
+    args: readonly string[],
+    requiredText: readonly string[] = [],
+  ): Promise<ProbeResult> =>
+    await runProbe(
+      codexLauncher,
+      [...codexArguments, ...args],
+      childEnvironment,
+      requiredText,
+    );
   const [codexVersion, gitVersion, loginStatus, globalHelp, execHelp] =
     await Promise.all([
-      runProbe(config.codexExecutable, ["--version"], childEnvironment),
+      probeCodex(["--version"]),
       runProbe(config.gitExecutable, ["--version"], childEnvironment),
-      runProbe(config.codexExecutable, ["login", "status"], childEnvironment),
-      runProbe(config.codexExecutable, ["--help"], childEnvironment),
-      runProbe(config.codexExecutable, ["exec", "--help"], childEnvironment),
+      probeCodex(["login", "status"]),
+      probeCodex(
+        ["--help"],
+        ["--strict-config", "--sandbox", "--ask-for-approval", "--cd"],
+      ),
+      probeCodex(
+        ["exec", "--help"],
+        [
+          "--json",
+          "--ephemeral",
+          "--ignore-user-config",
+          "--ignore-rules",
+          "--color",
+          "--output-schema",
+        ],
+      ),
     ]);
   const compatible =
     globalHelp.ok &&
     execHelp.ok &&
-    ["--strict-config", "--sandbox", "--ask-for-approval", "--cd"].every(
-      (flag) => globalHelp.output.includes(flag),
-    ) &&
-    [
-      "--json",
-      "--ephemeral",
-      "--ignore-user-config",
-      "--ignore-rules",
-      "--color",
-      "--output-schema",
-    ].every((flag) => execHelp.output.includes(flag));
+    globalHelp.requiredTextPresent &&
+    execHelp.requiredTextPresent;
   const warnings = [
     ...(!loginStatus.ok
       ? [
@@ -82,6 +103,7 @@ async function runProbe(
   executable: string,
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
+  requiredText: readonly string[] = [],
 ): Promise<ProbeResult> {
   return await new Promise<ProbeResult>((resolvePromise) => {
     execFile(
@@ -90,20 +112,39 @@ async function runProbe(
       {
         encoding: "utf8",
         env: environment,
-        maxBuffer: 64 * 1024,
+        maxBuffer: MAX_PROBE_OUTPUT_BYTES,
         timeout: 10_000,
         windowsHide: true,
       },
       (error, stdout, stderr) => {
-        const output = sanitizeProbeOutput(stdout || stderr);
-        resolvePromise({ ok: error === null, output });
+        // Decide capability support before redaction: an explicitly forwarded
+        // value can legitimately equal a required flag. Only this boolean and
+        // the separately sanitized diagnostic leave the probe boundary.
+        const boundedRawOutput = (stdout || stderr).slice(
+          0,
+          MAX_PROBE_OUTPUT_BYTES,
+        );
+        const output = sanitizeProbeOutput(
+          boundedRawOutput,
+          Object.values(environment),
+        );
+        resolvePromise({
+          ok: error === null,
+          output,
+          requiredTextPresent: requiredText.every((value) =>
+            boundedRawOutput.includes(value),
+          ),
+        });
       },
     );
   });
 }
 
-function sanitizeProbeOutput(value: string): string {
-  return value
+function sanitizeProbeOutput(
+  value: string,
+  knownEnvironmentValues: readonly (string | undefined)[],
+): string {
+  return redactKnownValues(value, knownEnvironmentValues)
     .replaceAll(/\p{Cc}+/gu, " ")
     .trim()
     .slice(0, 64 * 1024);

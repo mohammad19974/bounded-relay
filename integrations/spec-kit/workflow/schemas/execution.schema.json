@@ -49,6 +49,7 @@
     },
     "results": {
       "type": "array",
+      "description": "Canonical task results. Writer checks are runtime-capped at 256 receipts across the complete execution.",
       "maxItems": 64,
       "items": { "$ref": "#/$defs/result" }
     },
@@ -156,7 +157,7 @@
         },
         "checks": {
           "type": "array",
-          "maxItems": 32,
+          "maxItems": 64,
           "items": { "$ref": "#/$defs/checkReceipt" }
         },
         "startedAt": { "type": "string", "format": "date-time" },

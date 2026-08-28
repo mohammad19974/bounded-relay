@@ -6,7 +6,13 @@ import { resolve } from "node:path";
 const args = process.argv.slice(2);
 
 if (args.length === 1 && args[0] === "--version") {
-  process.stdout.write("codex-cli 99.0.0-test\n");
+  process.stdout.write(
+    process.env.FAKE_ECHO_AUTH === "1"
+      ? `codex-cli ${process.env.OPENAI_API_KEY ?? "missing"}\n`
+      : process.env.FAKE_ECHO_FORWARD === "1"
+        ? `codex-cli ${process.env.FOO ?? "missing"}\n`
+        : "codex-cli 99.0.0-test\n",
+  );
   process.exit(0);
 }
 

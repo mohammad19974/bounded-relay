@@ -8,6 +8,7 @@ import {
   assertInside,
   assertSafeIdentifier,
   fail,
+  optionalProjectProfilePath,
   printSuccess,
   readJson,
 } from "./evidence-core.mjs";
@@ -79,7 +80,14 @@ try {
   }
   const candidate = resolve(projectRoot, featureDirectory);
   assertInside(projectRoot, candidate, "feature directory");
-  printSuccess({ runId, featureDirectory, codexShare, valid: true });
+  const projectProfile = optionalProjectProfilePath({ projectRoot, inputs });
+  printSuccess({
+    runId,
+    featureDirectory,
+    codexShare,
+    projectProfile,
+    valid: true,
+  });
 } catch (error) {
   process.stderr.write(`Workflow preflight error: ${error.message}\n`);
   process.exitCode = 1;

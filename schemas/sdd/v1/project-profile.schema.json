@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boundedrelay.dev/schemas/sdd/v1/project-profile.schema.json",
+  "title": "BoundedRelay project policy profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "profileId",
+    "profileVersion",
+    "laneCapabilities",
+    "taskPolicies",
+    "checkProfiles",
+    "codexPolicy",
+    "writePolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "profileId": { "$ref": "#/$defs/id" },
+    "profileVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+    },
+    "laneCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codex", "claude-host"],
+      "properties": {
+        "codex": { "$ref": "#/$defs/laneCapabilities" },
+        "claude-host": { "$ref": "#/$defs/laneCapabilities" }
+      }
+    },
+    "taskPolicies": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 11,
+      "items": { "$ref": "#/$defs/taskPolicy" }
+    },
+    "checkProfiles": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/checkProfile" }
+    },
+    "requiredChecks": { "$ref": "#/$defs/requiredChecks" },
+    "codexPolicy": { "$ref": "#/$defs/codexPolicy" },
+    "writePolicy": { "$ref": "#/$defs/writePolicy" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)(?:\\.|\\.\\.|\\.git)(?:/|$))(?!.*//).+$"
+    },
+    "taskKind": {
+      "enum": [
+        "analysis",
+        "planning",
+        "architecture",
+        "implementation",
+        "debugging",
+        "testing",
+        "refactor",
+        "review",
+        "security-review",
+        "documentation",
+        "integration"
+      ]
+    },
+    "risk": { "enum": ["low", "medium", "high", "critical"] },
+    "authority": { "enum": ["read-only", "write"] },
+    "reasoningEffort": {
+      "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+    },
+    "laneCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "score"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "score": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    "laneCapabilities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/laneCapability" }
+    },
+    "capabilityRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilityId", "minimumScore", "weight"],
+      "properties": {
+        "capabilityId": { "$ref": "#/$defs/id" },
+        "minimumScore": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "weight": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "taskPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "requirements"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/taskKind" },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/capabilityRequirement" }
+        }
+      }
+    },
+    "checkProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "cwd", "argv"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "cwd": {
+          "anyOf": [{ "const": "." }, { "$ref": "#/$defs/path" }]
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          }
+        }
+      }
+    },
+    "checkIds": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "kindCheckMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "analysis": { "$ref": "#/$defs/checkIds" },
+        "planning": { "$ref": "#/$defs/checkIds" },
+        "architecture": { "$ref": "#/$defs/checkIds" },
+        "implementation": { "$ref": "#/$defs/checkIds" },
+        "debugging": { "$ref": "#/$defs/checkIds" },
+        "testing": { "$ref": "#/$defs/checkIds" },
+        "refactor": { "$ref": "#/$defs/checkIds" },
+        "review": { "$ref": "#/$defs/checkIds" },
+        "security-review": { "$ref": "#/$defs/checkIds" },
+        "documentation": { "$ref": "#/$defs/checkIds" },
+        "integration": { "$ref": "#/$defs/checkIds" }
+      }
+    },
+    "riskCheckMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "low": { "$ref": "#/$defs/checkIds" },
+        "medium": { "$ref": "#/$defs/checkIds" },
+        "high": { "$ref": "#/$defs/checkIds" },
+        "critical": { "$ref": "#/$defs/checkIds" }
+      }
+    },
+    "authorityCheckMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "read-only": { "$ref": "#/$defs/checkIds" },
+        "write": { "$ref": "#/$defs/checkIds" }
+      }
+    },
+    "requiredChecks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "always": { "$ref": "#/$defs/checkIds" },
+        "byKind": { "$ref": "#/$defs/kindCheckMap" },
+        "byRisk": { "$ref": "#/$defs/riskCheckMap" },
+        "byAuthority": { "$ref": "#/$defs/authorityCheckMap" }
+      }
+    },
+    "codexExecutionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "reasoningEffort"],
+      "properties": {
+        "model": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "reasoningEffort": { "$ref": "#/$defs/reasoningEffort" }
+      }
+    },
+    "kindCodexPolicyMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "analysis": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "planning": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "architecture": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "implementation": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "debugging": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "testing": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "refactor": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "review": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "security-review": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "documentation": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "integration": { "$ref": "#/$defs/codexExecutionPolicy" }
+      }
+    },
+    "riskCodexPolicyMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "low": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "medium": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "high": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "critical": { "$ref": "#/$defs/codexExecutionPolicy" }
+      }
+    },
+    "codexPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default"],
+      "properties": {
+        "default": { "$ref": "#/$defs/codexExecutionPolicy" },
+        "byKind": { "$ref": "#/$defs/kindCodexPolicyMap" },
+        "byRisk": { "$ref": "#/$defs/riskCodexPolicyMap" }
+      }
+    },
+    "pathList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "writePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedRoots"],
+      "properties": {
+        "allowedRoots": { "$ref": "#/$defs/pathList" },
+        "additionalDeniedRoots": { "$ref": "#/$defs/pathList" }
+      }
+    }
+  }
+}

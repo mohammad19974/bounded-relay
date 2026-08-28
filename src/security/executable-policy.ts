@@ -1,9 +1,24 @@
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, extname, isAbsolute, resolve } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  extname,
+  isAbsolute,
+  resolve,
+} from "node:path";
 
 import type { WorkerConfig } from "../config/worker-config.js";
 import { ERROR_CODES, WorkerError } from "../core/errors.js";
+
+export interface ExecutableLauncher {
+  readonly executable: string;
+  readonly arguments: readonly string[];
+}
+
+const WINDOWS_NODE_SCRIPT_EXTENSIONS = new Set([".cjs", ".js", ".mjs"]);
+const WINDOWS_SHELL_SCRIPT_EXTENSIONS = new Set([".bat", ".cmd", ".ps1"]);
 
 async function verifyExecutable(
   candidate: string,
@@ -32,6 +47,7 @@ export async function resolveExecutable(
   pathValue: string | undefined,
   label: string,
   pathExtensions: string | undefined = process.env.PATHEXT,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
   if (
     isAbsolute(configured) ||
@@ -48,6 +64,7 @@ export async function resolveExecutable(
     for (const executableName of candidateExecutableNames(
       configured,
       pathExtensions,
+      platform,
     )) {
       try {
         return await verifyExecutable(
@@ -71,18 +88,114 @@ export async function resolveExecutable(
 function candidateExecutableNames(
   configured: string,
   pathExtensions: string | undefined,
+  platform: NodeJS.Platform,
 ): readonly string[] {
-  if (process.platform !== "win32" || extname(configured) !== "") {
+  if (platform !== "win32" || extname(configured) !== "") {
     return [configured];
   }
-  const extensions = (pathExtensions ?? ".COM;.EXE;.BAT;.CMD")
-    .split(";")
-    .map((extension) => extension.trim().toLowerCase())
-    .filter(Boolean);
-  return [
-    configured,
-    ...extensions.map((extension) => `${configured}${extension}`),
+  const extensions = [
+    ...new Set(
+      (pathExtensions ?? ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .map((extension) => extension.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ].sort(
+    (left, right) => windowsExtensionRank(left) - windowsExtensionRank(right),
+  );
+  return extensions.map((extension) => `${configured}${extension}`);
+}
+
+function windowsExtensionRank(extension: string): number {
+  if (extension === ".com" || extension === ".exe") {
+    return 0;
+  }
+  if (extension === ".cmd" || extension === ".bat") {
+    return 1;
+  }
+  return 2;
+}
+
+async function canonicalRegularFile(path: string): Promise<string | undefined> {
+  try {
+    const canonical = await realpath(path);
+    return (await stat(canonical)).isFile() ? canonical : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveNpmCodexEntrypoint(
+  commandPath: string,
+): Promise<string | undefined> {
+  if (basename(commandPath).toLowerCase() !== "codex.cmd") {
+    return undefined;
+  }
+
+  const commandDirectory = dirname(commandPath);
+  const candidates = [
+    resolve(commandDirectory, "node_modules/@openai/codex/bin/codex.js"),
+    resolve(commandDirectory, "../@openai/codex/bin/codex.js"),
   ];
+  for (const candidate of candidates) {
+    const canonical = await canonicalRegularFile(candidate);
+    if (canonical !== undefined) {
+      return canonical;
+    }
+  }
+  return undefined;
+}
+
+export async function resolveCodexLauncher(
+  codexExecutable: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<ExecutableLauncher> {
+  if (platform !== "win32") {
+    return { executable: codexExecutable, arguments: [] };
+  }
+
+  const extension = extname(codexExecutable).toLowerCase();
+  if (WINDOWS_NODE_SCRIPT_EXTENSIONS.has(extension)) {
+    return {
+      executable: process.execPath,
+      arguments: [codexExecutable],
+    };
+  }
+  if (extension === ".cmd") {
+    const entrypoint = await resolveNpmCodexEntrypoint(codexExecutable);
+    if (entrypoint !== undefined) {
+      return { executable: process.execPath, arguments: [entrypoint] };
+    }
+  }
+  if (extension === ".exe" || extension === ".com") {
+    return { executable: codexExecutable, arguments: [] };
+  }
+
+  const unsupported =
+    WINDOWS_SHELL_SCRIPT_EXTENSIONS.has(extension) || extension === "";
+  throw new WorkerError(
+    ERROR_CODES.CODEX_NOT_FOUND,
+    unsupported
+      ? "Codex resolved to a Windows shell shim that cannot be launched safely; install the official standalone Codex CLI or set CCW_CODEX_BIN to codex.exe"
+      : `Codex resolved to an unsupported Windows executable type: ${extension}`,
+  );
+}
+
+function assertWindowsNativeExecutable(
+  executable: string,
+  label: string,
+  platform: NodeJS.Platform,
+): void {
+  if (platform !== "win32") {
+    return;
+  }
+  const extension = extname(executable).toLowerCase();
+  if (extension !== ".exe" && extension !== ".com") {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      `${label} must resolve to a native .exe or .com file on Windows`,
+    );
+  }
 }
 
 export async function resolveWorkerExecutables(
@@ -104,5 +217,14 @@ export async function resolveWorkerExecutables(
     ),
   ]);
 
-  return { ...config, codexExecutable, gitExecutable };
+  const codexLauncher = await resolveCodexLauncher(codexExecutable);
+  assertWindowsNativeExecutable(gitExecutable, "Git", process.platform);
+
+  return {
+    ...config,
+    codexExecutable,
+    codexLauncherExecutable: codexLauncher.executable,
+    codexLauncherArguments: codexLauncher.arguments,
+    gitExecutable,
+  };
 }

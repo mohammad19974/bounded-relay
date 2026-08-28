@@ -15,8 +15,10 @@ human -> Claude Code host orchestrator -> local BoundedRelay MCP -> Codex worker
 Claude Code owns the workflow, user interaction, and authorized integration.
 BoundedRelay constrains what its Codex child can read or propose. It adds a
 model-free router, isolated proposals, detached strict-review clones, and
-content-addressed host-then-Codex evidence. It does not launch Claude, merge
-patches, or attempt to be a general swarm platform.
+content-addressed host-then-Codex evidence. Portable
+[project profiles](project-profiles.md) specialize routing and verification
+through strict data without adding executable plugins. BoundedRelay does not
+launch Claude, merge patches, or attempt to be a general swarm platform.
 
 ## Nearby projects
 
@@ -66,6 +68,10 @@ several documented patterns but implements a narrower contract:
   fresh corrected run.
 - The MCP runtime remains usable without Spec Kit; the full SDD pack is an
   explicit local installation for repositories that need these extra gates.
+- Portable project profiles provide a deliberately smaller extensibility seam
+  than a general agent/plugin registry: capability fit, narrower write scopes,
+  required check descriptors, and Codex policy are canonical data intersected
+  with server policy. They cannot load code, add providers, or execute hooks.
 
 ## Intentionally deferred
 

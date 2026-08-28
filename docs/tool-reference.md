@@ -175,6 +175,82 @@ cross-provider review and explicit profile requirement instead.
 `claude-host` means the current Claude Code session and its selected model. This
 tool never selects, invokes, or verifies a Claude model.
 
+### Profiled routing
+
+Adding `projectProfile` dispatches to the separate `routeProfiledSddTasks`
+contract. The profile must satisfy the strict project profile schema; unknown
+fields fail. Omitting it still returns the unchanged schema-version-1
+`sdd-routing-v2` plan and legacy fingerprint.
+
+```json
+{
+  "projectProfile": {
+    "schemaVersion": 1,
+    "profileId": "reviewed-project-policy",
+    "profileVersion": "1.0.0",
+    "laneCapabilities": {
+      "codex": [{ "id": "general-engineering", "score": 2 }],
+      "claude-host": [{ "id": "general-engineering", "score": 2 }]
+    },
+    "taskPolicies": [
+      {
+        "kind": "analysis",
+        "requirements": [
+          {
+            "capabilityId": "general-engineering",
+            "minimumScore": 1,
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "checkProfiles": [],
+    "codexPolicy": {
+      "default": { "model": null, "reasoningEffort": null }
+    },
+    "writePolicy": {
+      "allowedRoots": [],
+      "additionalDeniedRoots": []
+    }
+  },
+  "tasks": [
+    {
+      "id": "inspect-contract",
+      "effortPoints": 2,
+      "risk": "medium",
+      "authority": "read-only",
+      "kind": "analysis"
+    }
+  ]
+}
+```
+
+Profiled output uses schema version `2`, routing policy `sdd-routing-v3`, and
+fit policy `sdd-capability-fit-v1`. It adds:
+
+- `projectProfile` identity plus the normalized content fingerprint;
+- fixed executor descriptors that preserve the Claude Code host and local Codex
+  worker roles;
+- explicit and capability-effective eligible lanes, weighted fit, requirements,
+  and decision stage per assignment;
+- required check IDs, working directories, and canonical command digests for
+  matching write tasks;
+- resolved Codex execution/cross-review policy and whether a server allowlist is
+  required; and
+- a plan fingerprint binding those projections, tasks, waves, and policy
+  versions.
+
+Hard task eligibility precedes capability minimums and fit. Required checks are
+evidence descriptors and are never executed by this tool. Write policy can only
+narrow task scopes. A non-null resolved Codex model must be present in the
+running server's `CCW_ALLOWED_MODELS`; otherwise the MCP request fails before a
+plan is returned. This check is server-owned—calling the pure TypeScript router
+directly only reports `serverAllowlistRequired`.
+
+The profile fingerprint is a content address, not a signature or approval. Read
+[Portable project profiles](project-profiles.md) for the full contract, threat
+boundary, CLI template/validation workflow, and safe adoption checklist.
+
 ## `codex_worker_sdd_review`
 
 Freezes already-completed host evidence, seals exact repository artifacts, and

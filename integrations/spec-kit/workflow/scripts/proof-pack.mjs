@@ -13,6 +13,7 @@ import {
   fail,
   fileDigest,
   hostReviewContextId,
+  optionalProjectProfilePath,
   printSuccess,
   readJson,
   requireSchema,
@@ -24,6 +25,8 @@ import { assertStrictSddReview } from "./strict-review.mjs";
 
 const ROUTING_POLICY_VERSION = "sdd-routing-v2";
 const FIT_POLICY_VERSION = "sdd-task-fit-v1";
+const PROFILED_ROUTING_POLICY_VERSION = "sdd-routing-v3";
+const PROFILED_FIT_POLICY_VERSION = "sdd-capability-fit-v1";
 const ROUTER_ENTRY = fileURLToPath(
   new URL("../../../../dist/cli.js", import.meta.url),
 );
@@ -74,7 +77,13 @@ function approvedReview(document, phase) {
     `${phase} Codex evidence digest`,
   );
   if (phase !== "plan") {
-    assertCheckReceipts(document.checks, `${phase} review checks`, false, 256);
+    assertCheckReceipts(
+      document.checks,
+      `${phase} review checks`,
+      false,
+      256,
+      false,
+    );
     if (document.checksSha256 !== canonicalDigest(document.checks)) {
       fail(`${phase} review check receipt digest is invalid`);
     }
@@ -170,6 +179,7 @@ function assertAuthoritativeRoute(routing) {
       encoding: "utf8",
       input: JSON.stringify(routing.router?.request),
       maxBuffer: 2 * 1024 * 1024,
+      timeout: 30_000,
       shell: false,
     },
   );
@@ -234,10 +244,17 @@ try {
   assertHistoricalReviewChain(execution, implementation, convergence);
 
   const routeResult = routing.document.router?.result;
-  if (
-    routeResult?.routingPolicyVersion !== ROUTING_POLICY_VERSION ||
-    routeResult.fitPolicyVersion !== FIT_POLICY_VERSION
-  ) {
+  const legacyPolicies =
+    routeResult?.schemaVersion === 1 &&
+    routeResult.routingPolicyVersion === ROUTING_POLICY_VERSION &&
+    routeResult.fitPolicyVersion === FIT_POLICY_VERSION &&
+    (routing.document.projectProfile ?? null) === null;
+  const profiledPolicies =
+    routeResult?.schemaVersion === 2 &&
+    routeResult.routingPolicyVersion === PROFILED_ROUTING_POLICY_VERSION &&
+    routeResult.fitPolicyVersion === PROFILED_FIT_POLICY_VERSION &&
+    (routing.document.projectProfile ?? null) !== null;
+  if (!legacyPolicies && !profiledPolicies) {
     fail("proof pack requires the current routing and fit policies");
   }
   assertSha256(routeResult.planFingerprint, "route plan fingerprint");
@@ -285,11 +302,13 @@ try {
       };
     });
 
+  const projectProfilePath = optionalProjectProfilePath(context);
   const currentConvergenceRevision = comparisonRevision(
     context,
     convergence.document.sourceEvidence?.finalRevision,
     ["spec.md", "plan.md", "tasks.md"],
     true,
+    projectProfilePath === null ? [] : [projectProfilePath],
   );
   assertRevisionEqual(
     convergence.document.revision,
@@ -335,6 +354,8 @@ try {
       routingPolicyVersion: routeResult.routingPolicyVersion,
       fitPolicyVersion: routeResult.fitPolicyVersion,
       planFingerprint: routeResult.planFingerprint,
+      projectProfile: routing.document.projectProfile ?? null,
+      crossReviewPolicy: routing.document.crossReviewPolicy ?? null,
     },
     routingTotals: routing.document.totals,
     decisions: {

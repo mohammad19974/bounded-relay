@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createWorkerApplication } from "../src/worker-application.js";
+import { loadWorkerConfig } from "../src/config/worker-config.js";
 import { ERROR_CODES } from "../src/core/errors.js";
 import { collectWorkerHealth } from "../src/runtime/doctor.js";
 import { GitClient } from "../src/runtime/git-client.js";
@@ -84,10 +85,48 @@ describe("GitClient and WorkspaceInspector", () => {
     const repository = await createTestRepository();
     cleanupPaths.push(repository.root);
     const config = makeConfig({ allowedRoots: [repository.root] });
-    await expect(
-      new GitClient(config).run(repository.root, ["not-a-real-subcommand"]),
-    ).rejects.toMatchObject({ code: ERROR_CODES.RUNTIME_FAILED });
+    const untrustedArgument = "not-a-real-subcommand-secret-value";
+    const operation = new GitClient(config).run(repository.root, [
+      untrustedArgument,
+    ]);
+    await expect(operation).rejects.toMatchObject({
+      code: ERROR_CODES.RUNTIME_FAILED,
+      message: "A required Git command failed",
+    });
+    await expect(operation).rejects.not.toThrow(untrustedArgument);
   });
+});
+
+describe("doctor capability detection", () => {
+  test("checks bounded raw help before redacting forwarded environment values", async () => {
+    const parsedConfig = loadWorkerConfig(
+      { CCW_FORWARD_ENV: "FOO,FAKE_ECHO_FORWARD" },
+      process.cwd(),
+    );
+    const config = makeConfig({
+      codexExecutable: "/canonical/npm/codex.cmd",
+      codexLauncherExecutable: process.execPath,
+      codexLauncherArguments: [fakeCodex],
+      gitExecutable: process.execPath,
+      forwardEnvironment: parsedConfig.forwardEnvironment,
+    });
+    const health = await collectWorkerHealth(config, {
+      ...process.env,
+      FOO: "--json",
+      FAKE_ECHO_FORWARD: "1",
+    });
+
+    expect(health).toMatchObject({
+      ok: true,
+      authenticated: true,
+      compatible: true,
+      codexVersion: "codex-cli [REDACTED]",
+    });
+    expect(health.warnings).not.toContain(
+      "This Codex CLI does not advertise every flag required by the worker",
+    );
+    expect(JSON.stringify(health)).not.toContain("--json");
+  }, 15_000);
 });
 
 describe.runIf(process.platform !== "win32")(
@@ -96,13 +135,19 @@ describe.runIf(process.platform !== "win32")(
     test("collects sanitized versions and capability warnings", async () => {
       await ensureExecutable(fakeCodex);
       const config = makeConfig({
-        codexExecutable: fakeCodex,
+        codexExecutable: "/canonical/npm/codex.cmd",
+        codexLauncherExecutable: process.execPath,
+        codexLauncherArguments: [fakeCodex],
         gitExecutable: fakeCodex,
         allowedRoots: ["/safe/repository"],
         allowedModels: ["gpt-5.6-sol"],
         enableProposals: true,
         forwardAuthEnvironment: true,
-        forwardEnvironment: ["FAKE_LOGIN_FAIL", "FAKE_INCOMPATIBLE"],
+        forwardEnvironment: [
+          "FAKE_LOGIN_FAIL",
+          "FAKE_INCOMPATIBLE",
+          "FAKE_ECHO_AUTH",
+        ],
       });
       const healthy = await collectWorkerHealth(config, {
         PATH: process.env.PATH,
@@ -113,6 +158,7 @@ describe.runIf(process.platform !== "win32")(
         authenticated: true,
         compatible: true,
         codexVersion: "codex-cli 99.0.0-test",
+        codexExecutable: "/canonical/npm/codex.cmd",
         gitVersion: "codex-cli 99.0.0-test",
         proposalsEnabled: true,
         authEnvironmentForwarding: true,
@@ -141,6 +187,16 @@ describe.runIf(process.platform !== "win32")(
       expect(incompatible.warnings).toContain(
         "This Codex CLI does not advertise every flag required by the worker",
       );
+
+      const secret = "doctor-forwarded-secret-value";
+      const redacted = await collectWorkerHealth(config, {
+        PATH: process.env.PATH,
+        FAKE_LOGIN_FAIL: "0",
+        FAKE_ECHO_AUTH: "1",
+        OPENAI_API_KEY: secret,
+      });
+      expect(redacted.codexVersion).toContain("[REDACTED]");
+      expect(JSON.stringify(redacted)).not.toContain(secret);
     }, 15_000);
 
     test("composes a worker with canonical executables and initialized managers", async () => {

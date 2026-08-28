@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js `>=22.13.0`;
+- Node.js `^22.13.0 || ^24.0.0`;
 - npm compatible with the checked-in lockfile;
 - Git;
 - Codex CLI only for optional manual smoke tests.
@@ -32,7 +32,7 @@ When a lockfile is present, CI and clean local verification should use `npm ci`.
 | `npm test`              | Run deterministic Vitest tests once.                                                 |
 | `npm run test:coverage` | Run tests with repository coverage thresholds.                                       |
 | `npm run build`         | Emit the ESM package and declarations to `dist/`.                                    |
-| `npm run pack:check`    | Inspect the npm tarball contents without publishing.                                 |
+| `npm run pack:check`    | Pack, clean-install, and exercise the real npm artifact without publishing.          |
 | `npm run check`         | Run all release-quality local gates.                                                 |
 
 ## Source layout
@@ -110,6 +110,15 @@ Start the built stdio executable through an MCP client transport and verify:
 - specialized review uses status/result lifecycle and returns a validated gate,
   while generic analysis cannot satisfy it;
 - stdout contains protocol traffic only.
+
+### Installed-package contract
+
+`npm run pack:check` is the distribution gate. It checks the actual tarball
+rather than importing source through `tsx`: required runtime and integration
+files must ship, private/development files must not ship, an empty consumer must
+install the artifact, and its CLI, ESM entrypoint, npm shim, structural SDD
+validator, and credential-free MCP surface must work. CI repeats this contract
+on every supported operating-system and Node.js pair.
 
 Documentation contract tests also keep local links, JSON examples, package
 identity, generated brand assets, and packaged integration manifests from

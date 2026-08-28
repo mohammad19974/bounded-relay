@@ -20,11 +20,17 @@ export interface PreparedProposal {
 export class ProposalWorkspace {
   readonly #config: WorkerConfig;
   readonly #git: GitClient;
+  readonly #nullDevice: "NUL" | "/dev/null";
   readonly #workspacesDirectory: string;
 
-  public constructor(config: WorkerConfig, git: GitClient) {
+  public constructor(
+    config: WorkerConfig,
+    git: GitClient,
+    platform: NodeJS.Platform = process.platform,
+  ) {
     this.#config = config;
     this.#git = git;
+    this.#nullDevice = platform === "win32" ? "NUL" : "/dev/null";
     this.#workspacesDirectory = resolve(config.stateDirectory, "workspaces");
   }
 
@@ -73,7 +79,7 @@ export class ProposalWorkspace {
       ]);
       await this.#git.run(stageRoot, [
         "-c",
-        "core.hooksPath=/dev/null",
+        `core.hooksPath=${this.#nullDevice}`,
         "checkout",
         "--detach",
         "--quiet",
@@ -84,7 +90,7 @@ export class ProposalWorkspace {
         "config",
         "--local",
         "core.hooksPath",
-        process.platform === "win32" ? "NUL" : "/dev/null",
+        this.#nullDevice,
       ]);
 
       const baselineRevision = await this.#revision(stageRoot);

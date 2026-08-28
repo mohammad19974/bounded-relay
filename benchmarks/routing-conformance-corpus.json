@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "boundedrelay-routing-policy-v1",
+  "legacyRoute": {
+    "expectedPlanFingerprint": "a8782cd5581eeedec45c744abd3f0703e4505a1bb598b44831ba9e267781fdfa",
+    "tasks": [
+      {
+        "id": "legacy-plan",
+        "effortPoints": 3,
+        "risk": "medium",
+        "authority": "read-only",
+        "kind": "planning"
+      },
+      {
+        "id": "legacy-build",
+        "effortPoints": 5,
+        "risk": "medium",
+        "authority": "write",
+        "kind": "implementation",
+        "dependencies": ["legacy-plan"],
+        "writeScopes": ["src/core"]
+      },
+      {
+        "id": "legacy-review",
+        "effortPoints": 2,
+        "risk": "high",
+        "authority": "read-only",
+        "kind": "review",
+        "dependencies": ["legacy-build"]
+      }
+    ]
+  },
+  "crossReviewPolicyCases": {
+    "reviewKindPolicy": {
+      "model": "fixture-review-kind-model",
+      "reasoningEffort": "medium"
+    },
+    "defaultPolicy": {
+      "model": "fixture-default-model",
+      "reasoningEffort": "low"
+    },
+    "mutatedReviewKindPolicy": {
+      "model": "fixture-review-kind-model-v2",
+      "reasoningEffort": "high"
+    },
+    "mediumReviewTask": {
+      "id": "cross-review-medium",
+      "effortPoints": 1,
+      "risk": "medium",
+      "authority": "read-only",
+      "kind": "review"
+    }
+  },
+  "profiledRoute": {
+    "projectProfile": {
+      "schemaVersion": 1,
+      "profileId": "conformance-fixture",
+      "profileVersion": "1.0.0",
+      "laneCapabilities": {
+        "codex": [
+          {
+            "id": "code-change",
+            "score": 4
+          },
+          {
+            "id": "system-context",
+            "score": 2
+          },
+          {
+            "id": "verification",
+            "score": 4
+          }
+        ],
+        "claude-host": [
+          {
+            "id": "code-change",
+            "score": 2
+          },
+          {
+            "id": "system-context",
+            "score": 4
+          },
+          {
+            "id": "verification",
+            "score": 3
+          }
+        ]
+      },
+      "taskPolicies": [
+        {
+          "kind": "planning",
+          "requirements": [
+            {
+              "capabilityId": "system-context",
+              "minimumScore": 2,
+              "weight": 3
+            }
+          ]
+        },
+        {
+          "kind": "implementation",
+          "requirements": [
+            {
+              "capabilityId": "code-change",
+              "minimumScore": 2,
+              "weight": 3
+            }
+          ]
+        },
+        {
+          "kind": "testing",
+          "requirements": [
+            {
+              "capabilityId": "verification",
+              "minimumScore": 4,
+              "weight": 3
+            }
+          ]
+        },
+        {
+          "kind": "review",
+          "requirements": [
+            {
+              "capabilityId": "system-context",
+              "minimumScore": 2,
+              "weight": 2
+            },
+            {
+              "capabilityId": "verification",
+              "minimumScore": 3,
+              "weight": 2
+            }
+          ]
+        }
+      ],
+      "checkProfiles": [
+        {
+          "id": "policy-check",
+          "cwd": ".",
+          "argv": ["conformance-check", "policy"]
+        },
+        {
+          "id": "unit-check",
+          "cwd": ".",
+          "argv": ["conformance-check", "unit"]
+        }
+      ],
+      "requiredChecks": {
+        "byRisk": {
+          "high": ["policy-check"]
+        },
+        "byAuthority": {
+          "write": ["unit-check"]
+        }
+      },
+      "codexPolicy": {
+        "default": {
+          "model": null,
+          "reasoningEffort": null
+        },
+        "byKind": {
+          "implementation": {
+            "model": "fixture-implementation-model",
+            "reasoningEffort": "high"
+          }
+        },
+        "byRisk": {
+          "high": {
+            "model": "fixture-high-risk-model",
+            "reasoningEffort": "xhigh"
+          },
+          "critical": {
+            "model": "fixture-critical-model",
+            "reasoningEffort": "ultra"
+          }
+        }
+      },
+      "writePolicy": {
+        "allowedRoots": ["src", "tests"],
+        "additionalDeniedRoots": ["src/generated"]
+      }
+    },
+    "tasks": [
+      {
+        "id": "T001-planning",
+        "effortPoints": 3,
+        "risk": "medium",
+        "authority": "read-only",
+        "kind": "planning"
+      },
+      {
+        "id": "T002-implementation",
+        "effortPoints": 5,
+        "risk": "high",
+        "authority": "write",
+        "kind": "implementation",
+        "dependencies": ["T001-planning"],
+        "writeScopes": ["src/core"],
+        "preferredLane": "claude-host"
+      },
+      {
+        "id": "T003-testing",
+        "effortPoints": 3,
+        "risk": "medium",
+        "authority": "write",
+        "kind": "testing",
+        "dependencies": ["T002-implementation"],
+        "writeScopes": ["tests/core"]
+      },
+      {
+        "id": "T004-review",
+        "effortPoints": 2,
+        "risk": "high",
+        "authority": "read-only",
+        "kind": "review",
+        "dependencies": ["T003-testing"]
+      }
+    ]
+  }
+}

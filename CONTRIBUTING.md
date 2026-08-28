@@ -20,8 +20,8 @@ npm run build
 npm test
 ```
 
-Node.js `>=22.13.0` is required. See [Development](docs/development.md) for the
-complete workflow.
+Node.js `^22.13.0 || ^24.0.0` is required. See
+[Development](docs/development.md) for the complete workflow.
 
 ## Pull requests
 

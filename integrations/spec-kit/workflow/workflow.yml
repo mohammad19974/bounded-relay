@@ -33,6 +33,11 @@ inputs:
     default: "50"
     prompt:
       "Soft Codex percentage for tasks still neutral after eligibility and fit"
+  project_profile:
+    type: string
+    default: ""
+    prompt:
+      "Optional tracked repository-relative BoundedRelay project profile JSON"
   spec_verdict:
     type: string
     default: ""
@@ -121,7 +126,8 @@ steps:
     type: gate
     message:
       "Strict dual review requires spec and plan at an exact committed revision
-      with a clean worktree. This workflow does not create the checkpoint
+      with a clean worktree. When project_profile is set, its exact bytes are
+      reviewed and sealed too. This workflow does not create the checkpoint
       commit. Approve only after creating or authorizing that review checkpoint."
     show_file: "{{ inputs.feature_directory }}/plan.md"
     options: [approve, reject]
@@ -229,7 +235,7 @@ steps:
         "run_id={{ context.run_id }} tool=codex_worker_sdd_route
         neutral_codex_share_bps={{ inputs.codex_share }}00
         metric=fit-neutral-estimated-effort odd_neutral_tie_break=codex
-        persist_fingerprint=true"
+        profile_mode=workflow-input persist_fingerprint=true"
 
   - id: verify-routing
     type: shell
@@ -242,7 +248,9 @@ steps:
     type: gate
     message:
       "Approve the provider assignments, path leases, critical cross-provider
-      lanes, and every explicit deviation from the effort target."
+      lanes, exact capability/check/model projections, and every explicit
+      deviation from the effort target. A configured profile path must never be
+      inside a writer lease."
     show_file:
       ".specify/workflows/runs/{{ context.run_id }}/evidence/routing.json"
     options: [approve, reject]

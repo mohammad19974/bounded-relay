@@ -1,5 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
-import { dirname, parse, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 
 import type { RunMode } from "../core/types.js";
 import { ERROR_CODES, WorkerError, toErrorMessage } from "../core/errors.js";
@@ -11,18 +11,42 @@ export interface ResolvedWorkingSet {
   readonly writePaths?: readonly string[];
 }
 
-export function isPathInside(parent: string, candidate: string): boolean {
-  const pathFromParent = relative(parent, candidate);
+export interface PathOperations {
+  readonly isAbsolute: (path: string) => boolean;
+  readonly relative: (from: string, to: string) => string;
+  readonly sep: string;
+}
+
+const NATIVE_PATH_OPERATIONS: PathOperations = {
+  isAbsolute,
+  relative,
+  sep,
+};
+
+export function isPathInside(
+  parent: string,
+  candidate: string,
+  pathOperations: PathOperations = NATIVE_PATH_OPERATIONS,
+): boolean {
+  const pathFromParent = pathOperations.relative(parent, candidate);
   return (
     pathFromParent === "" ||
-    (pathFromParent !== ".." &&
-      !pathFromParent.startsWith(`..${sep}`) &&
-      !pathFromParent.startsWith(sep))
+    (!pathOperations.isAbsolute(pathFromParent) &&
+      pathFromParent !== ".." &&
+      !pathFromParent.startsWith(`..${pathOperations.sep}`) &&
+      !pathFromParent.startsWith(pathOperations.sep))
   );
 }
 
-export function pathsOverlap(left: string, right: string): boolean {
-  return isPathInside(left, right) || isPathInside(right, left);
+export function pathsOverlap(
+  left: string,
+  right: string,
+  pathOperations: PathOperations = NATIVE_PATH_OPERATIONS,
+): boolean {
+  return (
+    isPathInside(left, right, pathOperations) ||
+    isPathInside(right, left, pathOperations)
+  );
 }
 
 async function canonicalDirectory(

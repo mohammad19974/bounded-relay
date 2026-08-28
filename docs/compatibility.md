@@ -8,11 +8,13 @@ current CI and local `doctor` output.
 
 | Component   | v0.1 requirement                                                           | Notes                                                                                                                                                                                                                           |
 | ----------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js     | `>=22.13.0`                                                                | Node 22 and 24 are the intended CI lines.                                                                                                                                                                                       |
+| Node.js     | Node 22.13+ or 24.x                                                        | CI starts at Node 22.13.0 and also tests the current Node 24 line. Other major lines are not claimed by v0.1.                                                                                                                   |
 | Claude Code | Local stdio MCP support                                                    | Configure with `claude mcp add --transport stdio`. No exact Claude Code version is pinned yet.                                                                                                                                  |
 | Codex CLI   | `codex exec --json` plus required flags                                    | Must advertise `--strict-config`, `--sandbox`, `--ask-for-approval`, `--cd`, `--json`, `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--color`, and `--output-schema`; prompts must be accepted from stdin with `-`. |
 | Git         | Modern CLI with clone, detached checkout, status, diff, and ref inspection | Proposal mode additionally needs `git diff --binary --full-index`.                                                                                                                                                              |
 | MCP         | SDK-supported local stdio transport                                        | HTTP, SSE, and remote deployment are not supported.                                                                                                                                                                             |
+
+The exact npm engine expression is `^22.13.0 || ^24.0.0`.
 
 Run:
 
@@ -30,10 +32,16 @@ boundedrelay doctor
 
 ## Operating systems
 
-The implementation targets current macOS, Linux, and Windows Node.js
-environments. Process-tree termination, temporary directories, executable
-discovery, path delimiters, null devices, and file permissions have
-platform-specific branches.
+The compatibility workflow runs six source-and-installed-package combinations:
+Node 22.13.0 and Node 24 on Ubuntu, macOS, and Windows. Each job creates the npm
+tarball, installs it into an empty consumer, verifies the generated npm command
+shim, and performs a credential-free MCP handshake without a model call.
+
+Process-tree termination, temporary-directory cleanup, executable discovery,
+path delimiters, null devices, long Windows paths, and file permissions have
+platform-specific branches. On Windows, native Codex executables and the
+standard `@openai/codex` npm shim are supported without `shell: true`; arbitrary
+shell shims are rejected.
 
 Do not treat a target as verified merely because code exists for it. Consult the
 latest CI run for the exact operating-system and Node.js combination. Until
@@ -100,11 +108,12 @@ Reasoning effort accepts `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`,
 but support can differ by model or Codex version. Provider rejection becomes a
 job failure; the worker does not silently select a different model or effort.
 
-The packaged Adaptive SDD workflow treats `gpt-5.6-sol` plus `ultra` as an
-explicit critical-task profile. The model must be present in
-`CCW_ALLOWED_MODELS`, and the installed CLI/account must support the exact
-combination. The workflow stops when it is unavailable; it does not fall back to
-another Codex model or replace the model selected by Claude Code.
+The packaged Adaptive SDD workflow keeps `gpt-5.6-sol` plus `ultra` as its
+legacy no-profile critical-task policy. A profiled route instead uses the exact
+non-null model and effort declared by `codexPolicy.byRisk.critical`. In both
+cases the model must be present in `CCW_ALLOWED_MODELS`, the local CLI/account
+must support the exact combination, and the workflow stops rather than silently
+downgrading or replacing the model selected by Claude Code.
 
 ## Optional integration compatibility
 

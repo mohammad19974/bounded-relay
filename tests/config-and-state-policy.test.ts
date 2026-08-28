@@ -59,6 +59,15 @@ describe("loadWorkerConfig", () => {
     [{ CCW_ENABLE_PROPOSALS: "perhaps" }, "boolean"],
     [{ CCW_ALLOWED_MODELS: "--dangerous model" }, "model identifier"],
     [{ CCW_FORWARD_ENV: "GOOD,NOT-VALID" }, "environment variable"],
+    [
+      {
+        CCW_FORWARD_ENV: Array.from(
+          { length: 33 },
+          (_, index) => `FORWARDED_${index}`,
+        ).join(","),
+      },
+      "at most 32 unique",
+    ],
     [{ CCW_MAX_CONCURRENT: "0" }, "CCW_MAX_CONCURRENT"],
     [{ CCW_MAX_CONCURRENT: "1.5" }, "CCW_MAX_CONCURRENT"],
     [

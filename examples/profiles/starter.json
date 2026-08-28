@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "profileId": "portable-read-only-starter",
+  "profileVersion": "1.0.0",
+  "laneCapabilities": {
+    "codex": [
+      {
+        "id": "general-engineering",
+        "score": 2
+      }
+    ],
+    "claude-host": [
+      {
+        "id": "general-engineering",
+        "score": 2
+      }
+    ]
+  },
+  "taskPolicies": [
+    {
+      "kind": "analysis",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "planning",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "architecture",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "implementation",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "debugging",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "testing",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "refactor",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "review",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "security-review",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "documentation",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    },
+    {
+      "kind": "integration",
+      "requirements": [
+        {
+          "capabilityId": "general-engineering",
+          "minimumScore": 1,
+          "weight": 1
+        }
+      ]
+    }
+  ],
+  "checkProfiles": [],
+  "codexPolicy": {
+    "default": {
+      "model": null,
+      "reasoningEffort": null
+    }
+  },
+  "writePolicy": {
+    "allowedRoots": [],
+    "additionalDeniedRoots": []
+  }
+}

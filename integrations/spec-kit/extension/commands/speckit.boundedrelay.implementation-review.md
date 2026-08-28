@@ -25,12 +25,13 @@ JSON.
    its findings in the Codex prompt or `focus`.
 3. Start a fresh `codex_worker_sdd_review` with the matching `implementation` or
    `convergence` phase, `mode: strict`, exact sealed artifact paths, the
-   recorded comparison base revision, expected full Git revision, and frozen
-   host evidence. Use the exact prepared `codexReviewPolicy`, and persist the
-   job's observed model and reasoning effort. Generic `codex_worker_analyze`
-   cannot satisfy this gate. Keep Claude findings out of `focus` and the Codex
-   prompt. Use an allowlisted model only, poll with `afterRevision`, and
-   retrieve the final result once.
+   recorded comparison base revision, expected full Git revision, every sealed
+   artifact path including a configured project profile, and frozen host
+   evidence. Use the exact prepared `codexReviewPolicy` (including a profiled
+   cross-review model and effort), and persist the job's observed model and
+   reasoning effort. Generic `codex_worker_analyze` cannot satisfy this gate.
+   Keep Claude findings out of `focus` and the Codex prompt. Use an allowlisted
+   model only, poll with `afterRevision`, and retrieve the final result once.
 4. Recompute workspace state. Evidence is invalid if HEAD, changed-file scope,
    artifacts, source execution/review digest, check receipts, or the
    working-tree seal changed.

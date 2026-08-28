@@ -43,6 +43,11 @@ one lane. No share predicts tokens, cost, latency, or quality.
    the accepted evidence.
 10. Handoff is drafted run-locally, proof-checked again in an isolated clone,
     and atomically published to the canonical path with idempotent retries.
+11. An optional project profile is a tracked, bounded, regular non-symlink JSON
+    file. Its exact bytes join plan, routing, implementation, convergence, and
+    proof seals; a one-byte change invalidates the chain. Profile write policy
+    can only narrow task leases, and the profile path itself is protected from
+    every writer.
 
 ## Prerequisites
 
@@ -118,7 +123,8 @@ specify workflow run boundedrelay-adaptive-sdd \
   -i spec="Build the approved feature" \
   -i scope="packages/example" \
   -i feature_directory="specs/001-example" \
-  -i codex_share=50
+  -i codex_share=50 \
+  -i project_profile=".boundedrelay/project-profile.json"
 ```
 
 The inputs are:
@@ -128,7 +134,19 @@ The inputs are:
 - `feature_directory`: a safe repository-relative directory containing
   `spec.md`, `plan.md`, and later `tasks.md`;
 - `codex_share`: the soft Codex share for fit-neutral effort, an integer percent
-  with default `50`; it is not a quota.
+  with default `50`; it is not a quota;
+- `project_profile`: optional safe repository-relative path to a committed
+  BoundedRelay project-profile JSON file. Omit it to retain the legacy
+  `sdd-routing-v2` behavior.
+
+Create a starting profile with `boundedrelay profile template`, review and
+restrict its allowed roots/checks/model policy for the consumer repository, then
+validate the exact file with `boundedrelay profile validate`. The workflow uses
+the authoritative schema-v2 router and records the normalized fingerprint,
+executor, capability, required-check, and Codex-policy projections. Check `argv`
+values are inert configuration: no integration script evaluates or executes
+them. The host coordinator owns any reviewed command execution and must submit
+digest-only receipts for the exact checkpoint tree.
 
 At strict checkpoint gates, run the relevant repository checks and create or
 explicitly authorize a normal review commit. Reject the gate if the worktree is
@@ -194,10 +212,21 @@ Code or the human coordinator integrates; BoundedRelay never integrates into the
 source, commits, merges, pushes, publishes, or deploys a patch.
 
 Every Codex execution result records `model` and `reasoningEffort`, including
-`null` for routed defaults; both must exactly match its routed model policy. A
-critical `claude-host` assignment forces the Codex implementation/convergence
-cross-review to the allowlisted `gpt-5.6-sol` / `ultra` profile and fails closed
-if it is unavailable.
+`null` for independently routed defaults; both must exactly match its routed
+model policy. A no-profile legacy critical route keeps the allowlisted
+`gpt-5.6-sol` / `ultra` requirement.
+
+With a project profile, each Codex implementation or Claude-task Codex
+cross-review is bound to the exact routed profile model and reasoning effort.
+Writer results must cover every routed required-check ID with a successful
+tree-bound receipt whose profile ID, cwd, and command digest match the sealed
+definition. A task may require at most 64 receipts, while this optional Spec Kit
+workflow rejects more than 256 required writer receipts across the whole route
+before execution. Execution separately caps all recorded writer receipts at 256
+across the run, including optional profile-defined receipts, and refuses the
+wave that would record receipt 257 before it creates a checkpoint. Receipts for
+undefined profile checks are rejected. The integration never launches the
+profile's command arguments itself.
 
 Implementation review is bound to verified execution and compares the routing
 base revision with final `HEAD`; more than 256 changed paths is rejected.
@@ -230,9 +259,13 @@ the mechanism is not a signature or durable audit ledger.
 Claude Code chooses its own host model. The plugin and workflow never select
 Opus, Sonnet, or any other Claude model. Codex models come only from the
 server-owned allowlist; omitting a model uses the server default. A critical
-route requires an explicitly allowlisted `gpt-5.6-sol` with `ultra` reasoning on
-its Codex execution or review lane, plus the other provider's independent
-review. If unavailable, stop and report the blocker; never downgrade silently.
+no-profile route requires an explicitly allowlisted `gpt-5.6-sol` with `ultra`
+reasoning on its Codex execution or review lane. A project profile instead must
+declare an explicit non-null model and effort in `codexPolicy.byRisk.critical`;
+the authoritative router binds that exact policy and the plan-level
+`crossReviewPolicy`, and the server allowlist still decides availability. The
+other provider remains an independent reviewer. If the required policy is
+unavailable, stop and report the blocker; never downgrade silently.
 
 ## Recovery and removal
 

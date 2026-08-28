@@ -29,6 +29,14 @@ contracts are validated.
 - `codex_worker_sdd_route`, a synchronous model-free adaptive router with
   `sdd-routing-v2` quality-first task-kind fit, a neutral non-quota share,
   stable reasons, a plan fingerprint, and dependency-safe single-writer waves.
+- A separate `routeProfiledSddTasks` / `sdd-routing-v3` path for strict portable
+  project profiles: deterministic capability fit, intersection-only write
+  restrictions, required check definitions and command digests, Codex-only model
+  policy, and content-addressed evidence without changing no-profile routes.
+- A safe generic project-profile template, stdin/stdout validation, public
+  schema and documentation, plus a deterministic credential-free routing
+  conformance corpus that reports policy invariants rather than model quality,
+  speed, token, or cost results.
 - `codex_worker_sdd_review`, a structured read-only review job that freezes
   Claude host evidence, seals exact artifacts, excludes host findings from the
   Codex prompt, and returns a current dual-review gate verdict.
@@ -53,8 +61,9 @@ contracts are validated.
   receipts bind `testedTree`, and a disposable Git index proves the persisted
   patch produces the exact checkpoint tree.
 - Exact execution-time matching of each Codex result's model and reasoning
-  effort to routed policy, including required `gpt-5.6-sol` / `ultra` Codex
-  cross-review for critical Claude-host work.
+  effort to routed policy. Legacy no-profile critical host work retains the
+  `gpt-5.6-sol` / `ultra` review rule; profiled work uses its explicit,
+  allowlisted critical and plan-level cross-review policies.
 - Context-derived frozen host review IDs binding run/phase, nonce, revision,
   source/check digests, and prepared review policy for implementation and
   convergence evidence.
@@ -77,6 +86,12 @@ contracts are validated.
 
 ### Changed
 
+- The supported Node contract is now explicit (`^22.13.0 || ^24.0.0`), and CI
+  exercises the real installed tarball on both lines across Ubuntu, macOS, and
+  Windows.
+- Source and Git-dependency installs build through `prepare`; package checks now
+  clean-install and exercise the shipped CLI, ESM entrypoint, npm shim,
+  integration pack, and credential-free MCP surface.
 - The package, executable, and MCP implementation name are now `boundedrelay`;
   the stable v0.1 MCP tools and environment variables remain `codex_worker_*`
   and `CCW_*`.
@@ -96,6 +111,10 @@ contracts are validated.
 
 ### Security
 
+- Windows startup now uses file URLs for ESM imports, rejects cross-drive path
+  containment, preserves only required case-normalized runtime environment keys,
+  resolves trusted native launchers without a shell, enables long Git paths, and
+  avoids PATH lookup for `taskkill.exe`.
 - Proposal mode is disabled by default and never applies its returned patch to
   the source worktree.
 - Direct token environment forwarding is disabled by default.

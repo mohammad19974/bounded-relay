@@ -25,7 +25,8 @@ export function assertCheckReceipts(
   value,
   label,
   required = true,
-  maximum = 32,
+  maximum = 64,
+  enforceUniqueIds = true,
 ) {
   if (
     !Array.isArray(value) ||
@@ -47,7 +48,7 @@ export function assertCheckReceipts(
       fail(`${label}[${index}] contains unsupported fields`);
     }
     assertSafeIdentifier(receipt.id, `${label}[${index}].id`);
-    if (ids.has(receipt.id)) {
+    if (enforceUniqueIds && ids.has(receipt.id)) {
       fail(`${label} repeats receipt id ${receipt.id}`);
     }
     ids.add(receipt.id);

@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { describe, expect, it } from "vitest";
 
+import { createProjectProfileTemplate } from "../src/sdd/routing/index.js";
 import {
   createTestRepository,
   makeStateDirectory,
@@ -37,6 +38,28 @@ describe("MCP stdio contract", () => {
         "codex_worker_cancel",
         "codex_worker_list",
       ]);
+      const annotations = Object.fromEntries(
+        tools.tools.map((tool) => [tool.name, tool.annotations]),
+      );
+      expect(annotations).toMatchObject({
+        codex_worker_capabilities: { openWorldHint: false },
+        codex_worker_workspace: { openWorldHint: false },
+        codex_worker_sdd_route: { openWorldHint: false },
+        codex_worker_sdd_review: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: true,
+        },
+        codex_worker_analyze: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: true,
+        },
+        codex_worker_status: { openWorldHint: false },
+        codex_worker_result: { openWorldHint: false },
+        codex_worker_cancel: { openWorldHint: false },
+        codex_worker_list: { openWorldHint: false },
+      });
 
       const capabilities = await testClient.client.callTool({
         name: "codex_worker_capabilities",
@@ -48,6 +71,10 @@ describe("MCP stdio contract", () => {
         authenticated: true,
         proposalsEnabled: false,
         transport: "stdio",
+        routingPolicies: {
+          legacy: { routingPolicyVersion: "sdd-routing-v2" },
+          profiled: { routingPolicyVersion: "sdd-routing-v3" },
+        },
       });
       const parsedText = JSON.parse(
         extractText(firstContent(capabilities)),
@@ -111,6 +138,102 @@ describe("MCP stdio contract", () => {
           neutralCodexShareBps: 5_000,
           taskCount: { codex: 2, "claude-host": 1 },
         },
+      });
+
+      const projectProfile = createProjectProfileTemplate();
+      const profiled = await testClient.client.callTool({
+        name: "codex_worker_sdd_route",
+        arguments: {
+          tasks: [
+            {
+              id: "profiled-review",
+              effortPoints: 2,
+              risk: "medium",
+              authority: "read-only",
+              kind: "review",
+            },
+          ],
+          projectProfile,
+        },
+      });
+      expect(profiled.isError).not.toBe(true);
+      expect(profiled.structuredContent).toMatchObject({
+        schemaVersion: 2,
+        routingPolicyVersion: "sdd-routing-v3",
+        fitPolicyVersion: "sdd-capability-fit-v1",
+        projectProfile: {
+          profileId: projectProfile.profileId,
+          profileVersion: projectProfile.profileVersion,
+        },
+        crossReviewPolicy: {
+          source: "project-profile",
+          purpose: "cross-review",
+          model: null,
+          reasoningEffort: null,
+          serverAllowlistRequired: false,
+        },
+      });
+
+      const refusedProfile = {
+        ...projectProfile,
+        codexPolicy: {
+          ...projectProfile.codexPolicy,
+          default: {
+            model: "not-server-allowlisted",
+            reasoningEffort: "high" as const,
+          },
+        },
+      };
+      const refused = await testClient.client.callTool({
+        name: "codex_worker_sdd_route",
+        arguments: {
+          tasks: [
+            {
+              id: "refused-profile",
+              effortPoints: 1,
+              risk: "medium",
+              authority: "read-only",
+              kind: "review",
+            },
+          ],
+          projectProfile: refusedProfile,
+        },
+      });
+      expect(refused.isError).toBe(true);
+      expect(refused.structuredContent).toMatchObject({
+        error: { code: "INVALID_REQUEST" },
+      });
+
+      const refusedCrossReviewProfile = {
+        ...projectProfile,
+        codexPolicy: {
+          ...projectProfile.codexPolicy,
+          byKind: {
+            review: {
+              model: "review-model-not-server-allowlisted",
+              reasoningEffort: "high" as const,
+            },
+          },
+        },
+      };
+      const refusedCrossReview = await testClient.client.callTool({
+        name: "codex_worker_sdd_route",
+        arguments: {
+          tasks: [
+            {
+              id: "refused-cross-review-profile",
+              effortPoints: 1,
+              risk: "medium",
+              authority: "read-only",
+              kind: "implementation",
+            },
+          ],
+          projectProfile: refusedCrossReviewProfile,
+        },
+      });
+      expect(refusedCrossReview.isError).toBe(true);
+      expect(refusedCrossReview.structuredContent).toMatchObject({
+        error: { code: "INVALID_REQUEST" },
       });
 
       const listed = await testClient.client.callTool({
@@ -201,9 +324,15 @@ describe("MCP stdio contract", () => {
     const testClient = await startTestClient(true, "proposal");
     try {
       const tools = await testClient.client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toContain(
-        "codex_worker_propose",
+      const proposalTool = tools.tools.find(
+        (tool) => tool.name === "codex_worker_propose",
       );
+      expect(proposalTool).toBeDefined();
+      expect(proposalTool?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+      });
 
       const submitted = await testClient.client.callTool({
         name: "codex_worker_propose",

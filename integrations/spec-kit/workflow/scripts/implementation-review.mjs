@@ -17,6 +17,7 @@ import {
   fail,
   fileDigest,
   hostReviewContextId,
+  optionalProjectProfilePath,
   printSuccess,
   readJson,
   repositoryTree,
@@ -51,6 +52,23 @@ function codexReviewPolicy(context, runId) {
   requireSchema(routing, runId, "routing");
   if (!Array.isArray(routing.assignments)) {
     fail("review model policy requires routing assignments");
+  }
+  if ((routing.projectProfile ?? null) !== null) {
+    const selected = routing.router?.result?.crossReviewPolicy;
+    if (
+      selected?.source !== "project-profile" ||
+      selected.purpose !== "cross-review" ||
+      selected.serverAllowlistRequired !== (selected.model !== null)
+    ) {
+      fail("project_profile cross-review policy is missing or malformed");
+    }
+    assertModel(selected.model ?? null, "profiled Codex review model");
+    return {
+      source: "server-allowlisted",
+      model: selected.model,
+      reasoningEffort: selected.reasoningEffort,
+      reason: "project-profile-cross-review",
+    };
   }
   return routing.assignments.some(
     (assignment) =>
@@ -149,6 +167,7 @@ function reviewSource(context, runId, phase) {
     "implementation review checks",
     false,
     256,
+    false,
   );
   if (implementation.checksSha256 !== canonicalDigest(implementation.checks)) {
     fail("implementation review check receipt digest is invalid");
@@ -212,6 +231,7 @@ function assertBoundEvidence(
     `${phase} review checks`,
     checksRequired,
     256,
+    false,
   );
   if (document.checksSha256 !== canonicalDigest(document.checks)) {
     fail(`${phase} review check receipt digest is invalid`);
@@ -296,11 +316,13 @@ try {
   const path = evidencePath(context, name);
   const source = reviewSource(context, runId, phase);
   const reviewPolicy = codexReviewPolicy(context, runId);
+  const projectProfilePath = optionalProjectProfilePath(context);
   const revision = comparisonRevision(
     context,
     source.baseRevision,
     ["spec.md", "plan.md", "tasks.md"],
     true,
+    projectProfilePath === null ? [] : [projectProfilePath],
   );
 
   if (action === "prepare") {

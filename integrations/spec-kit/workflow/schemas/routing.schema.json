@@ -31,6 +31,47 @@
     "planReviewSha256": { "$ref": "#/$defs/sha256" },
     "taskManifest": { "$ref": "#/$defs/taskManifest" },
     "taskManifestSha256": { "$ref": "#/$defs/sha256" },
+    "projectProfile": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "sourceSha256",
+            "profileId",
+            "profileVersion",
+            "profileFingerprint",
+            "checkProfiles"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.git(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z]:)(?!.*\\\\).+$"
+            },
+            "sourceSha256": { "$ref": "#/$defs/sha256" },
+            "profileId": { "$ref": "#/$defs/id" },
+            "profileVersion": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+            },
+            "profileFingerprint": { "$ref": "#/$defs/sha256" },
+            "checkProfiles": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/checkProfileBinding" }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "crossReviewPolicy": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/profiledCodexPolicy" }]
+    },
     "target": {
       "type": "object",
       "required": [
@@ -61,45 +102,10 @@
             "tool": { "const": "codex_worker_sdd_route" },
             "request": { "type": "object" },
             "result": {
-              "type": "object",
-              "required": [
-                "schemaVersion",
-                "routingPolicyVersion",
-                "fitPolicyVersion",
-                "selectionOrder",
-                "planFingerprint",
-                "tasks",
-                "assignments",
-                "waves",
-                "balance",
-                "reasons"
-              ],
-              "properties": {
-                "schemaVersion": { "const": 1 },
-                "routingPolicyVersion": { "const": "sdd-routing-v2" },
-                "fitPolicyVersion": { "const": "sdd-task-fit-v1" },
-                "planFingerprint": {
-                  "type": "string",
-                  "pattern": "^[a-f0-9]{64}$"
-                },
-                "tasks": { "type": "array" },
-                "assignments": { "type": "array" },
-                "waves": { "type": "array" },
-                "balance": { "type": "object" },
-                "reasons": { "type": "array" },
-                "selectionOrder": {
-                  "const": [
-                    "hard-eligibility",
-                    "quality-fit",
-                    "preferred-lane-tie-break",
-                    "neutral-effort-balance",
-                    "neutral-task-count-balance",
-                    "odd-neutral-tie-to-codex",
-                    "lexical-task-id"
-                  ]
-                }
-              },
-              "additionalProperties": false
+              "oneOf": [
+                { "$ref": "#/$defs/legacyRouterResult" },
+                { "$ref": "#/$defs/profiledRouterResult" }
+              ]
             }
           },
           "additionalProperties": false
@@ -159,7 +165,23 @@
           "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 },
           "revisionSeal": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
           "modelPolicy": { "$ref": "#/$defs/modelPolicy" },
-          "reviewerModelPolicy": { "$ref": "#/$defs/modelPolicy" }
+          "reviewerModelPolicy": { "$ref": "#/$defs/modelPolicy" },
+          "executorId": { "enum": ["claude-host", "codex-worker"] },
+          "capabilityRequirements": {
+            "type": "array",
+            "maxItems": 64,
+            "items": { "$ref": "#/$defs/capabilityRequirement" }
+          },
+          "capabilityEligibility": {
+            "$ref": "#/$defs/capabilityEligibility"
+          },
+          "requiredCheckProfiles": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/checkProfileBinding" }
+          },
+          "codexPolicy": { "$ref": "#/$defs/profiledCodexPolicy" }
         },
         "additionalProperties": false
       }
@@ -171,9 +193,517 @@
     },
     "preparedAt": { "type": "string", "format": "date-time" }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["projectProfile"],
+        "properties": { "projectProfile": { "type": "object" } }
+      },
+      "then": {
+        "required": ["crossReviewPolicy"],
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "executorId",
+                "capabilityRequirements",
+                "capabilityEligibility",
+                "requiredCheckProfiles",
+                "codexPolicy"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false,
   "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+    },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "checkProfileBinding": {
+      "type": "object",
+      "required": ["id", "cwd", "commandSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?:\\.|(?!/)(?!.*(?:^|/)\\.git(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z]:)(?!.*\\\\).+)$"
+        },
+        "commandSha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "legacyRouterResult": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "routingPolicyVersion",
+        "fitPolicyVersion",
+        "selectionOrder",
+        "planFingerprint",
+        "tasks",
+        "assignments",
+        "waves",
+        "balance",
+        "reasons"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "routingPolicyVersion": { "const": "sdd-routing-v2" },
+        "fitPolicyVersion": { "const": "sdd-task-fit-v1" },
+        "planFingerprint": { "$ref": "#/$defs/sha256" },
+        "tasks": { "type": "array" },
+        "assignments": { "type": "array" },
+        "waves": { "type": "array" },
+        "balance": { "type": "object" },
+        "reasons": { "type": "array" },
+        "selectionOrder": {
+          "const": [
+            "hard-eligibility",
+            "quality-fit",
+            "preferred-lane-tie-break",
+            "neutral-effort-balance",
+            "neutral-task-count-balance",
+            "odd-neutral-tie-to-codex",
+            "lexical-task-id"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "profiledCodexPolicy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "purpose",
+            "model",
+            "reasoningEffort",
+            "serverAllowlistRequired"
+          ],
+          "properties": {
+            "source": { "const": "project-profile" },
+            "purpose": { "enum": ["execution", "cross-review"] },
+            "model": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+            },
+            "reasoningEffort": {
+              "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+            },
+            "serverAllowlistRequired": { "const": true }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "purpose",
+            "model",
+            "reasoningEffort",
+            "serverAllowlistRequired"
+          ],
+          "properties": {
+            "source": { "const": "project-profile" },
+            "purpose": { "enum": ["execution", "cross-review"] },
+            "model": { "const": null },
+            "reasoningEffort": {
+              "enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]
+            },
+            "serverAllowlistRequired": { "const": false }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "capabilityRequirement": {
+      "type": "object",
+      "required": ["capabilityId", "minimumScore", "weight"],
+      "properties": {
+        "capabilityId": { "$ref": "#/$defs/id" },
+        "minimumScore": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "weight": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "additionalProperties": false
+    },
+    "capabilityEligibility": {
+      "type": "object",
+      "required": ["codex", "claude-host"],
+      "properties": {
+        "codex": { "type": "boolean" },
+        "claude-host": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "laneFit": {
+      "type": "object",
+      "required": ["codex", "claude-host"],
+      "properties": {
+        "codex": { "type": "integer", "minimum": 0 },
+        "claude-host": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "profiledRouteAssignment": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "lane",
+        "executorId",
+        "wave",
+        "selectedFitScore",
+        "laneFit",
+        "decisionStage",
+        "explicitEligibleLanes",
+        "effectiveEligibleLanes",
+        "capabilityRequirements",
+        "capabilityEligibility",
+        "requiredCheckProfiles",
+        "codexPolicy",
+        "reasons"
+      ],
+      "properties": {
+        "taskId": { "$ref": "#/$defs/id" },
+        "lane": { "enum": ["codex", "claude-host"] },
+        "executorId": { "enum": ["codex-worker", "claude-host"] },
+        "wave": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "selectedFitScore": { "type": "integer", "minimum": 0 },
+        "alternateFitScore": { "type": "integer", "minimum": 0 },
+        "laneFit": { "$ref": "#/$defs/laneFit" },
+        "decisionStage": {
+          "enum": [
+            "hard-eligibility",
+            "capability-eligibility",
+            "capability-fit",
+            "preferred-lane-tie-break",
+            "neutral-balance"
+          ]
+        },
+        "explicitEligibleLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["codex", "claude-host"] }
+        },
+        "effectiveEligibleLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["codex", "claude-host"] }
+        },
+        "capabilityRequirements": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/capabilityRequirement" }
+        },
+        "capabilityEligibility": {
+          "$ref": "#/$defs/capabilityEligibility"
+        },
+        "requiredCheckProfiles": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/checkProfileBinding" }
+        },
+        "codexPolicy": { "$ref": "#/$defs/profiledCodexPolicy" },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "routerTask": {
+      "type": "object",
+      "required": [
+        "id",
+        "effortPoints",
+        "risk",
+        "authority",
+        "kind",
+        "dependencies",
+        "writeScopes",
+        "eligibleLanes"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "effortPoints": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "risk": { "enum": ["low", "medium", "high", "critical"] },
+        "authority": { "enum": ["read-only", "write"] },
+        "kind": {
+          "enum": [
+            "analysis",
+            "planning",
+            "architecture",
+            "implementation",
+            "debugging",
+            "testing",
+            "refactor",
+            "review",
+            "security-review",
+            "documentation",
+            "integration"
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "writeScopes": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        },
+        "eligibleLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["codex", "claude-host"] }
+        },
+        "preferredLane": { "enum": ["codex", "claude-host"] }
+      },
+      "additionalProperties": false
+    },
+    "routerWave": {
+      "type": "object",
+      "required": ["wave", "taskIds"],
+      "properties": {
+        "wave": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "taskIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "writerTaskId": { "$ref": "#/$defs/id" }
+      },
+      "additionalProperties": false
+    },
+    "profiledBalance": {
+      "type": "object",
+      "required": [
+        "neutralCodexShareBps",
+        "actualCodexShareBps",
+        "absoluteEffortDeviationBps",
+        "totalEffortPoints",
+        "effortPoints",
+        "taskCount",
+        "totalWeightedFitScore",
+        "decisionCounts",
+        "deviations"
+      ],
+      "properties": {
+        "neutralCodexShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "actualCodexShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "absoluteEffortDeviationBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "totalEffortPoints": { "type": "integer", "minimum": 1 },
+        "effortPoints": { "$ref": "#/$defs/laneFit" },
+        "taskCount": { "$ref": "#/$defs/laneFit" },
+        "totalWeightedFitScore": { "type": "integer", "minimum": 0 },
+        "decisionCounts": {
+          "type": "object",
+          "required": [
+            "hard-eligibility",
+            "capability-eligibility",
+            "capability-fit",
+            "preferred-lane-tie-break",
+            "neutral-balance"
+          ],
+          "properties": {
+            "hard-eligibility": { "type": "integer", "minimum": 0 },
+            "capability-eligibility": { "type": "integer", "minimum": 0 },
+            "capability-fit": { "type": "integer", "minimum": 0 },
+            "preferred-lane-tie-break": { "type": "integer", "minimum": 0 },
+            "neutral-balance": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "deviations": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "enum": [
+                  "HARD_ELIGIBILITY",
+                  "CAPABILITY_ELIGIBILITY",
+                  "CAPABILITY_FIT_POLICY",
+                  "EFFORT_GRANULARITY"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "profiledRouterResult": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "routingPolicyVersion",
+        "fitPolicyVersion",
+        "selectionOrder",
+        "projectProfile",
+        "executors",
+        "crossReviewPolicy",
+        "planFingerprint",
+        "tasks",
+        "assignments",
+        "waves",
+        "balance",
+        "reasons"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 2 },
+        "routingPolicyVersion": { "const": "sdd-routing-v3" },
+        "fitPolicyVersion": { "const": "sdd-capability-fit-v1" },
+        "selectionOrder": {
+          "const": [
+            "hard-eligibility",
+            "capability-eligibility",
+            "capability-fit",
+            "preferred-lane-tie-break",
+            "neutral-effort-balance",
+            "neutral-task-count-balance",
+            "odd-neutral-tie-to-codex",
+            "lexical-task-id"
+          ]
+        },
+        "projectProfile": {
+          "type": "object",
+          "required": [
+            "schemaVersion",
+            "profileId",
+            "profileVersion",
+            "profileFingerprint"
+          ],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "profileId": { "$ref": "#/$defs/id" },
+            "profileVersion": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+            },
+            "profileFingerprint": { "$ref": "#/$defs/sha256" }
+          },
+          "additionalProperties": false
+        },
+        "executors": {
+          "const": [
+            {
+              "id": "claude-host",
+              "lane": "claude-host",
+              "role": "host-orchestrator",
+              "adapter": "claude-code",
+              "transport": "host-managed",
+              "modelSource": "host-selected",
+              "launchedByWorker": false
+            },
+            {
+              "id": "codex-worker",
+              "lane": "codex",
+              "role": "bounded-worker",
+              "adapter": "codex-exec-jsonl",
+              "transport": "boundedrelay-mcp-stdio",
+              "modelSource": "server-allowlisted",
+              "launchedByWorker": true
+            }
+          ]
+        },
+        "crossReviewPolicy": { "$ref": "#/$defs/profiledCodexPolicy" },
+        "planFingerprint": { "$ref": "#/$defs/sha256" },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/routerTask" }
+        },
+        "assignments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/profiledRouteAssignment" }
+        },
+        "waves": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/routerWave" }
+        },
+        "balance": { "$ref": "#/$defs/profiledBalance" },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "taskManifest": {
       "type": "object",
       "required": [

@@ -39,6 +39,13 @@ const PROOF_SCRIPT = fileURLToPath(
 );
 const HANDOFF_RELATIVE_PATH = ".specify/agents/HANDOFF.md";
 const DRAFT_FILE = "handoff-draft.md";
+const NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
+const RECURSIVE_REMOVE_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 3,
+  retryDelay: 100,
+};
 const CONTEXT_KEYS = new Set([
   "schemaVersion",
   "kind",
@@ -87,7 +94,7 @@ function assertVerifiedProofIsolated(context, runId) {
     );
     runGit(
       clone,
-      ["config", "core.hooksPath", "/dev/null"],
+      ["config", "core.hooksPath", NULL_DEVICE],
       "could not disable clone hooks",
     );
     runGit(
@@ -119,7 +126,7 @@ function assertVerifiedProofIsolated(context, runId) {
       fail("isolated handoff proof revalidation failed");
     }
   } finally {
-    rmSync(temporaryRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, RECURSIVE_REMOVE_OPTIONS);
   }
 }
 

@@ -1,7 +1,7 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { WorkerConfig } from "../src/config/worker-config.js";
 import { ERROR_CODES } from "../src/core/errors.js";
@@ -18,7 +18,10 @@ import type {
 import { GitClient } from "../src/runtime/git-client.js";
 import { ProposalWorkspace } from "../src/runtime/proposal-workspace.js";
 import { ReviewWorkspace } from "../src/runtime/review-workspace.js";
-import { SddReviewService } from "../src/sdd/review-job.js";
+import {
+  SddReviewService,
+  type StartSddReviewInput,
+} from "../src/sdd/review-job.js";
 import {
   createTestRepository,
   makeConfig,
@@ -30,6 +33,7 @@ interface ControlledRun {
   readonly request: ResolvedJobRequest;
   readonly onEvent: (event: RuntimeEvent) => void;
   readonly handle: RuntimeHandle;
+  readonly cancelReasons: ("user" | "shutdown")[];
   resolve(result: RuntimeResult): void;
 }
 
@@ -44,13 +48,21 @@ class ControlledRuntime implements WorkerRuntime {
     const completion = new Promise<RuntimeResult>((resolvePromise) => {
       resolveRun = resolvePromise;
     });
+    const cancelReasons: ("user" | "shutdown")[] = [];
     const handle: RuntimeHandle = {
       completion,
-      cancel: async () => {
+      cancel: async (reason) => {
+        cancelReasons.push(reason);
         resolveRun({ outcome: "cancelled", resultTruncated: false });
       },
     };
-    this.runs.push({ request, onEvent, handle, resolve: resolveRun });
+    this.runs.push({
+      request,
+      onEvent,
+      handle,
+      cancelReasons,
+      resolve: resolveRun,
+    });
     return handle;
   }
 }
@@ -71,6 +83,8 @@ async function makeManager(
   readonly manager: JobManager;
   readonly runtime: ControlledRuntime;
   readonly repository: Awaited<ReturnType<typeof createTestRepository>>;
+  readonly stateDirectory: string;
+  readonly reviews: SddReviewService;
 }> {
   const repository = await createTestRepository();
   cleanupPaths.push(repository.root);
@@ -83,16 +97,17 @@ async function makeManager(
   });
   const runtime = new ControlledRuntime();
   const git = new GitClient(config);
+  const reviews = new SddReviewService(config, git);
   const manager = new JobManager({
     config,
     runtime,
     proposalWorkspace: new ProposalWorkspace(config, git),
     reviewWorkspace: new ReviewWorkspace(config, git),
     leases: new LeaseManager(stateDirectory),
-    reviews: new SddReviewService(config, git),
+    reviews,
   });
   await manager.initialize();
-  return { manager, runtime, repository };
+  return { manager, runtime, repository, stateDirectory, reviews };
 }
 
 function makeValidationManager(): JobManager {
@@ -120,6 +135,24 @@ async function waitForRuns(
     }
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
   }
+}
+
+function strictReviewInput(
+  repository: Awaited<ReturnType<typeof createTestRepository>>,
+): StartSddReviewInput {
+  return {
+    phase: "plan",
+    mode: "strict",
+    artifactPaths: ["README.md"],
+    expectedRevision: repository.revision,
+    cwd: repository.root,
+    hostReview: {
+      reviewId: "shutdown-race-host-review",
+      verdict: "approved",
+      summary: "The host review approves the sealed plan.",
+      findings: [],
+    },
+  };
 }
 
 describe("JobManager request policy and idempotency", () => {
@@ -459,15 +492,24 @@ describe("JobManager lifecycle", () => {
     });
     const first = await manager.submit({ task: "fail", cwd: repository.root });
     await waitForRuns(runtime, 1);
+    const adversarialSecret = `sk-test-${"x".repeat(48)}`;
     runtime.runs[0]?.resolve({
       outcome: "failed",
       resultTruncated: false,
-      failure: { code: ERROR_CODES.TIMEOUT, message: "timed out" },
+      failure: {
+        code: ERROR_CODES.TIMEOUT,
+        message: `timed out with ${adversarialSecret}`,
+      },
     });
-    await expect(waitForTerminal(manager, first.id)).resolves.toMatchObject({
+    const failed = await waitForTerminal(manager, first.id);
+    expect(failed).toMatchObject({
       status: "failed",
-      error: { code: ERROR_CODES.TIMEOUT },
+      error: {
+        code: ERROR_CODES.TIMEOUT,
+        message: "Codex exceeded the configured timeout",
+      },
     });
+    expect(JSON.stringify(failed)).not.toContain(adversarialSecret);
 
     const second = await manager.submit({
       task: "fail generically",
@@ -491,20 +533,117 @@ describe("JobManager lifecycle", () => {
     );
   });
 
-  test("shutdown cancels all active runtime handles", async () => {
+  test("shutdown atomically cancels active and queued jobs and refuses new work", async () => {
     const { manager, runtime, repository } = await makeManager({
-      maxConcurrent: 2,
+      maxConcurrent: 1,
+      maxQueued: 4,
     });
     const first = await manager.submit({ task: "one", cwd: repository.root });
     const second = await manager.submit({ task: "two", cwd: repository.root });
-    await waitForRuns(runtime, 2);
-    await manager.shutdown();
+    const third = await manager.submit({
+      task: "three",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+
+    const firstShutdown = manager.shutdown();
+    const repeatedShutdown = manager.shutdown();
+    expect(repeatedShutdown).toBe(firstShutdown);
+    await firstShutdown;
+
     await expect(waitForTerminal(manager, first.id)).resolves.toMatchObject({
       status: "cancelled",
     });
     await expect(waitForTerminal(manager, second.id)).resolves.toMatchObject({
       status: "cancelled",
     });
+    await expect(waitForTerminal(manager, third.id)).resolves.toMatchObject({
+      status: "cancelled",
+    });
+    expect(runtime.runs).toHaveLength(1);
+    expect(runtime.runs[0]?.cancelReasons).toEqual(["shutdown"]);
+
+    await expect(
+      manager.submit({ task: "too late", cwd: repository.root }),
+    ).rejects.toMatchObject({ code: ERROR_CODES.WORKER_SHUTTING_DOWN });
+    await expect(manager.submitReview(null as never)).rejects.toMatchObject({
+      code: ERROR_CODES.WORKER_SHUTTING_DOWN,
+    });
+    await expect(manager.shutdown()).resolves.toBeUndefined();
+  });
+
+  test("shutdown waits for proposal cleanup and lease release", async () => {
+    const { manager, runtime, repository, stateDirectory } = await makeManager({
+      enableProposals: true,
+      maxConcurrent: 1,
+    });
+    const proposal = await manager.submit({
+      task: "prepare an isolated proposal",
+      cwd: repository.root,
+      mode: "proposal",
+      expectedRevision: repository.revision,
+      writePaths: ["src"],
+    });
+    await waitForRuns(runtime, 1);
+    expect(await readdir(join(stateDirectory, "workspaces"))).not.toEqual([]);
+    expect(await readdir(join(stateDirectory, "locks"))).not.toEqual([]);
+
+    await manager.shutdown();
+
+    await expect(waitForTerminal(manager, proposal.id)).resolves.toMatchObject({
+      status: "cancelled",
+    });
+    expect(await readdir(join(stateDirectory, "workspaces"))).toEqual([]);
+    expect(await readdir(join(stateDirectory, "locks"))).toEqual([]);
+  });
+
+  test("shutdown waits for strict review workspace cleanup", async () => {
+    const { manager, runtime, repository, stateDirectory } = await makeManager({
+      maxConcurrent: 1,
+    });
+    const review = await manager.submitReview(strictReviewInput(repository));
+    await waitForRuns(runtime, 1);
+    expect(await readdir(join(stateDirectory, "reviews"))).not.toEqual([]);
+
+    await manager.shutdown();
+
+    await expect(waitForTerminal(manager, review.id)).resolves.toMatchObject({
+      status: "cancelled",
+    });
+    expect(await readdir(join(stateDirectory, "reviews"))).toEqual([]);
+  });
+
+  test("review preparation cannot enqueue after shutdown begins", async () => {
+    const { manager, repository, stateDirectory, reviews } =
+      await makeManager();
+    const originalPrepare = reviews.prepare.bind(reviews);
+    let releasePreparation: () => void = () => undefined;
+    const preparationGate = new Promise<void>((resolvePromise) => {
+      releasePreparation = resolvePromise;
+    });
+    let signalPreparation: () => void = () => undefined;
+    const preparationStarted = new Promise<void>((resolvePromise) => {
+      signalPreparation = resolvePromise;
+    });
+    vi.spyOn(reviews, "prepare").mockImplementation(
+      async (input, repositoryRoot) => {
+        signalPreparation();
+        await preparationGate;
+        return await originalPrepare(input, repositoryRoot);
+      },
+    );
+
+    const submission = manager.submitReview(strictReviewInput(repository));
+    await preparationStarted;
+    const shutdown = manager.shutdown();
+    releasePreparation();
+
+    await expect(submission).rejects.toMatchObject({
+      code: ERROR_CODES.WORKER_SHUTTING_DOWN,
+    });
+    await shutdown;
+    expect(manager.list()).toEqual([]);
+    expect(await readdir(join(stateDirectory, "reviews"))).toEqual([]);
   });
 });
 

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { ERROR_CODES } from "../src/core/errors.js";
-import { LeaseManager } from "../src/core/lease-manager.js";
+import {
+  LEASE_CLEANUP_OPTIONS,
+  LeaseManager,
+} from "../src/core/lease-manager.js";
 import { makeStateDirectory } from "./helpers.js";
 
 const cleanupPaths: string[] = [];
@@ -19,6 +22,15 @@ afterEach(async () => {
 });
 
 describe("LeaseManager", () => {
+  test("bounds retries for transient lock cleanup failures", () => {
+    expect(LEASE_CLEANUP_OPTIONS).toEqual({
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  });
+
   test("allows exactly one repository owner and makes release idempotent", async () => {
     const state = await makeStateDirectory();
     cleanupPaths.push(state);

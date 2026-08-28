@@ -12,7 +12,10 @@ import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ERROR_CODES } from "../src/core/errors.js";
-import { resolveExecutable } from "../src/security/executable-policy.js";
+import {
+  resolveCodexLauncher,
+  resolveExecutable,
+} from "../src/security/executable-policy.js";
 
 const cleanupPaths: string[] = [];
 
@@ -37,6 +40,68 @@ async function executable(path: string): Promise<void> {
 }
 
 describe("executable policy error coverage", () => {
+  test("builds shell-free Windows launchers for native, Node, and standard npm Codex installs", async () => {
+    const root = await fixture();
+    const nativeCodex = join(root, "codex.exe");
+    const scriptCodex = join(root, "fake-codex.mjs");
+    const globalBin = join(root, "npm-bin");
+    const npmShim = join(globalBin, "codex.cmd");
+    const npmEntrypoint = join(
+      globalBin,
+      "node_modules",
+      "@openai",
+      "codex",
+      "bin",
+      "codex.js",
+    );
+    await mkdir(join(npmEntrypoint, ".."), { recursive: true });
+    await writeFile(nativeCodex, "native fixture\n", "utf8");
+    await writeFile(scriptCodex, "export {};\n", "utf8");
+    await writeFile(npmShim, "@node codex.js %*\r\n", "utf8");
+    await writeFile(npmEntrypoint, "export {};\n", "utf8");
+
+    await expect(resolveCodexLauncher(nativeCodex, "win32")).resolves.toEqual({
+      executable: nativeCodex,
+      arguments: [],
+    });
+    await expect(resolveCodexLauncher(scriptCodex, "win32")).resolves.toEqual({
+      executable: process.execPath,
+      arguments: [scriptCodex],
+    });
+    await expect(resolveCodexLauncher(npmShim, "win32")).resolves.toEqual({
+      executable: process.execPath,
+      arguments: [await realpath(npmEntrypoint)],
+    });
+  });
+
+  test("rejects arbitrary Windows shell shims instead of enabling a shell", async () => {
+    const root = await fixture();
+    const shim = join(root, "custom.cmd");
+    await writeFile(shim, "@echo unsafe\r\n", "utf8");
+
+    const rejection: unknown = await resolveCodexLauncher(shim, "win32").catch(
+      (error: unknown) => error,
+    );
+    expect(rejection).toMatchObject({ code: ERROR_CODES.CODEX_NOT_FOUND });
+    expect(rejection).toBeInstanceOf(Error);
+    if (!(rejection instanceof Error)) {
+      throw new Error("Expected resolveCodexLauncher to reject with an Error");
+    }
+    expect(rejection.message).toContain("CCW_CODEX_BIN to codex.exe");
+  });
+
+  test("prefers a native Windows executable over bare and shell shims", async () => {
+    const root = await fixture();
+    const bare = join(root, "codex");
+    const shim = join(root, "codex.cmd");
+    const native = join(root, "codex.exe");
+    await Promise.all([executable(bare), executable(shim), executable(native)]);
+
+    await expect(
+      resolveExecutable("codex", root, "Codex", ".CMD;.EXE", "win32"),
+    ).resolves.toBe(await realpath(native));
+  });
+
   test.runIf(process.platform !== "win32")(
     "rejects directories and non-executable files with label-specific errors",
     async () => {

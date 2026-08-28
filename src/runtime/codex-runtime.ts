@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
+import { win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 import type { WorkerConfig } from "../config/worker-config.js";
@@ -12,13 +13,9 @@ import type {
   WorkerFailure,
   WorkerRuntime,
 } from "../core/types.js";
-import {
-  ERROR_CODES,
-  WorkerError,
-  toErrorMessage,
-  toWorkerError,
-} from "../core/errors.js";
+import { ERROR_CODES, WorkerError, toWorkerError } from "../core/errors.js";
 import { buildChildEnvironment } from "../security/environment-policy.js";
+import { publicRuntimeFailure } from "../security/redaction-policy.js";
 import { buildWorkerPrompt } from "../security/task-prompt.js";
 import { buildCodexInvocation } from "./codex-command.js";
 import { JsonlDecoder } from "./jsonl-decoder.js";
@@ -72,14 +69,12 @@ export class CodexRuntime implements WorkerRuntime {
     let stopReason: StopReason | undefined;
     let forceKillTimer: NodeJS.Timeout | undefined;
     let outputBytes = 0;
-    let stderr = "";
     let finalMessage: string | undefined;
     let sessionId: string | undefined;
     let usage: UsageSummary | undefined;
     let terminalEventSeen = false;
     let observedFailure: WorkerFailure | undefined;
     const stdoutDecoder = new StringDecoder("utf8");
-    const stderrDecoder = new StringDecoder("utf8");
 
     let resolveCompletion: (value: RuntimeResult) => void = () => undefined;
     const completion = new Promise<RuntimeResult>((resolvePromise) => {
@@ -136,10 +131,7 @@ export class CodexRuntime implements WorkerRuntime {
     child.stdout.on("data", (chunk: Buffer) => {
       outputBytes += chunk.byteLength;
       if (outputBytes > this.#config.maxOutputBytes) {
-        observedFailure = {
-          code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED,
-          message: "Codex exceeded the configured output limit",
-        };
+        observedFailure = publicRuntimeFailure("output-limit");
         requestStop("output-limit");
         return;
       }
@@ -157,14 +149,8 @@ export class CodexRuntime implements WorkerRuntime {
 
     child.stderr.on("data", (chunk: Buffer) => {
       outputBytes += chunk.byteLength;
-      if (Buffer.byteLength(stderr) < 16_384) {
-        stderr += stderrDecoder.write(chunk).slice(0, 16_384);
-      }
       if (outputBytes > this.#config.maxOutputBytes) {
-        observedFailure = {
-          code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED,
-          message: "Codex exceeded the configured output limit",
-        };
+        observedFailure = publicRuntimeFailure("output-limit");
         requestStop("output-limit");
       }
     });
@@ -174,22 +160,16 @@ export class CodexRuntime implements WorkerRuntime {
       finish({
         outcome: "failed",
         resultTruncated: false,
-        failure: {
-          code: notFound
-            ? ERROR_CODES.CODEX_NOT_FOUND
-            : ERROR_CODES.RUNTIME_FAILED,
-          message: notFound
-            ? "Codex executable could not be started"
-            : sanitizeFailure(toErrorMessage(error)),
-        },
+        failure: publicRuntimeFailure(
+          notFound ? "executable-not-found" : "process-start",
+        ),
       });
     });
 
-    child.on("close", (exitCode, signal) => {
+    child.on("close", (exitCode) => {
       try {
         jsonl.push(stdoutDecoder.end());
         jsonl.finish();
-        stderr += stderrDecoder.end();
       } catch (error) {
         const workerError = toWorkerError(error);
         observedFailure ??= {
@@ -206,10 +186,7 @@ export class CodexRuntime implements WorkerRuntime {
         finish({
           outcome: "failed",
           resultTruncated: false,
-          failure: {
-            code: ERROR_CODES.TIMEOUT,
-            message: `Codex exceeded the ${request.timeoutMs}ms timeout`,
-          },
+          failure: publicRuntimeFailure("timeout"),
         });
         return;
       }
@@ -225,13 +202,7 @@ export class CodexRuntime implements WorkerRuntime {
         finish({
           outcome: "failed",
           resultTruncated: false,
-          failure: {
-            code: ERROR_CODES.RUNTIME_FAILED,
-            message: sanitizeFailure(
-              stderr ||
-                `Codex exited with ${exitCode ?? "no code"}${signal ? ` (${signal})` : ""}`,
-            ),
-          },
+          failure: publicRuntimeFailure("nonzero-exit"),
         });
         return;
       }
@@ -261,13 +232,8 @@ export class CodexRuntime implements WorkerRuntime {
       });
     });
 
-    child.stdin.on("error", (error) => {
-      observedFailure = {
-        code: ERROR_CODES.RUNTIME_FAILED,
-        message: sanitizeFailure(
-          `Could not send task to Codex: ${toErrorMessage(error)}`,
-        ),
-      };
+    child.stdin.on("error", () => {
+      observedFailure = publicRuntimeFailure("stdin");
       requestStop("protocol");
     });
     child.stdin.end(buildWorkerPrompt(request), "utf8");
@@ -281,30 +247,127 @@ export class CodexRuntime implements WorkerRuntime {
   }
 }
 
-function terminateProcessTree(
-  child: ChildProcessWithoutNullStreams,
+export interface ProcessTreeChild {
+  readonly pid?: number | undefined;
+  kill(signal?: NodeJS.Signals | number): boolean;
+}
+
+export interface TaskkillProcess {
+  once(event: "error", listener: (error: Error) => void): this;
+  once(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): this;
+  unref(): void;
+}
+
+export type SpawnTaskkill = (
+  executable: string,
+  args: readonly string[],
+  options: {
+    readonly shell: false;
+    readonly stdio: "ignore";
+    readonly windowsHide: true;
+  },
+) => TaskkillProcess;
+
+export interface TerminateProcessTreeOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly spawnTaskkill?: SpawnTaskkill;
+}
+
+export function terminateProcessTree(
+  child: ProcessTreeChild,
   signal: NodeJS.Signals,
+  options: TerminateProcessTreeOptions = {},
 ): void {
   if (child.pid === undefined) {
     return;
   }
-  try {
-    if (process.platform === "win32") {
-      const killer = spawn(
-        "taskkill.exe",
+  const platform = options.platform ?? process.platform;
+
+  if (platform === "win32") {
+    const executable = resolveWindowsTaskkillExecutable(
+      options.environment ?? process.env,
+    );
+    if (executable === undefined) {
+      killSingleProcess(child, signal);
+      return;
+    }
+
+    let fallbackAttempted = false;
+    const fallback = (): void => {
+      if (fallbackAttempted) {
+        return;
+      }
+      fallbackAttempted = true;
+      killSingleProcess(child, signal);
+    };
+
+    try {
+      const spawnTaskkill: SpawnTaskkill =
+        options.spawnTaskkill ??
+        ((command, args, spawnOptions) =>
+          spawn(command, [...args], spawnOptions));
+      const killer = spawnTaskkill(
+        executable,
         ["/pid", String(child.pid), "/t", "/f"],
         { shell: false, stdio: "ignore", windowsHide: true },
       );
+      killer.once("error", fallback);
+      killer.once("exit", (code) => {
+        if (code !== 0) {
+          fallback();
+        }
+      });
       killer.unref();
-    } else {
-      process.kill(-child.pid, signal);
-    }
-  } catch {
-    try {
-      child.kill(signal);
     } catch {
-      // The process may already be gone.
+      fallback();
     }
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    killSingleProcess(child, signal);
+  }
+}
+
+export function resolveWindowsTaskkillExecutable(
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  const systemRoot =
+    readWindowsEnvironmentValue(environment, "SYSTEMROOT") ??
+    readWindowsEnvironmentValue(environment, "WINDIR");
+  if (systemRoot === undefined || !win32.isAbsolute(systemRoot)) {
+    return undefined;
+  }
+  return win32.join(systemRoot, "System32", "taskkill.exe");
+}
+
+function readWindowsEnvironmentValue(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+): string | undefined {
+  const normalizedName = name.toUpperCase();
+  for (const [candidateName, value] of Object.entries(environment)) {
+    if (candidateName.toUpperCase() === normalizedName && value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function killSingleProcess(
+  child: ProcessTreeChild,
+  signal: NodeJS.Signals,
+): void {
+  try {
+    child.kill(signal);
+  } catch {
+    // The process may already be gone.
   }
 }
 
@@ -346,18 +409,10 @@ function parseCodexEvent(value: unknown): {
   };
 
   if (rawType === "error" || rawType === "turn.failed") {
-    const nestedError = isRecord(value.error) ? value.error : undefined;
-    const message =
-      (typeof value.message === "string" && value.message) ||
-      (typeof nestedError?.message === "string" && nestedError.message) ||
-      "Codex reported a failed turn";
     return {
       event,
       terminal: true,
-      failure: {
-        code: ERROR_CODES.RUNTIME_FAILED,
-        message: sanitizeFailure(message),
-      },
+      failure: publicRuntimeFailure("failed-turn"),
     };
   }
 
@@ -437,11 +492,4 @@ function numeric(value: unknown): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function sanitizeFailure(message: string): string {
-  return message
-    .replaceAll(/\p{Cc}+/gu, " ")
-    .trim()
-    .slice(0, 1_000);
 }

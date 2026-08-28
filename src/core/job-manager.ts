@@ -20,6 +20,7 @@ import { REASONING_EFFORTS, RUN_MODES } from "./types.js";
 import { ERROR_CODES, WorkerError, toWorkerError } from "./errors.js";
 import type { LeaseHandle, LeaseManager } from "./lease-manager.js";
 import { resolveWorkingSet } from "../security/path-policy.js";
+import { normalizePublicRuntimeFailure } from "../security/redaction-policy.js";
 import type {
   PreparedProposal,
   ProposalWorkspace,
@@ -72,8 +73,11 @@ export class JobManager {
   readonly #idempotency = new Map<string, string>();
   readonly #queue: string[] = [];
   readonly #handles = new Map<string, RuntimeHandle>();
+  readonly #executions = new Map<string, Promise<void>>();
   #activeCount = 0;
   #pumpRunning = false;
+  #shuttingDown = false;
+  #shutdownPromise?: Promise<void>;
 
   public constructor(dependencies: {
     readonly config: WorkerConfig;
@@ -101,8 +105,10 @@ export class JobManager {
 
   public async submit(input: StartJobInput): Promise<PublicJobSnapshot>;
   public async submit(input: unknown): Promise<PublicJobSnapshot> {
+    this.#assertAcceptingJobs();
     assertStartJobInput(input);
     const request = await this.#resolveRequest(input);
+    this.#assertAcceptingJobs();
     return this.#enqueue(request);
   }
 
@@ -110,6 +116,7 @@ export class JobManager {
     input: StartSddReviewInput,
   ): Promise<PublicJobSnapshot>;
   public async submitReview(input: unknown): Promise<PublicJobSnapshot> {
+    this.#assertAcceptingJobs();
     const validated = validateSddReviewInput(input, this.#config);
     const baseRequest = await this.#resolveRequest({
       task: "Prepare an independent structured SDD review",
@@ -126,10 +133,12 @@ export class JobManager {
         ? {}
         : { idempotencyKey: validated.idempotencyKey }),
     });
+    this.#assertAcceptingJobs();
     const review = await this.#reviews.prepare(
       validated,
       baseRequest.repositoryRoot,
     );
+    this.#assertAcceptingJobs();
     const request: ResolvedJobRequest = {
       ...baseRequest,
       task: review.task,
@@ -143,6 +152,7 @@ export class JobManager {
   }
 
   #enqueue(request: ResolvedJobRequest): PublicJobSnapshot {
+    this.#assertAcceptingJobs();
     const fingerprint = requestFingerprint(request);
 
     if (request.idempotencyKey !== undefined) {
@@ -276,14 +286,42 @@ export class JobManager {
     return this.#snapshot(job);
   }
 
-  public async shutdown(): Promise<void> {
+  public shutdown(): Promise<void> {
+    if (this.#shutdownPromise !== undefined) {
+      return this.#shutdownPromise;
+    }
+
+    this.#shuttingDown = true;
+    const queuedIds = this.#queue.splice(0);
+    for (const id of queuedIds) {
+      const job = this.#jobs.get(id);
+      if (job?.status === "queued") {
+        job.cancellationRequested = true;
+        this.#markCancelled(job);
+      }
+    }
+    for (const job of this.#jobs.values()) {
+      if (job.status === "running") {
+        job.cancellationRequested = true;
+      }
+    }
+
     const handles = [...this.#handles.values()];
-    await Promise.all(
+    const executions = [...this.#executions.values()];
+    this.#shutdownPromise = this.#drainShutdown(handles, executions);
+    return this.#shutdownPromise;
+  }
+
+  async #drainShutdown(
+    handles: readonly RuntimeHandle[],
+    executions: readonly Promise<void>[],
+  ): Promise<void> {
+    await Promise.allSettled(
       handles.map(async (handle) => {
         await handle.cancel("shutdown");
       }),
     );
-    await Promise.all(handles.map((handle) => handle.completion));
+    await Promise.all(executions);
   }
 
   async #resolveRequest(input: StartJobInput): Promise<ResolvedJobRequest> {
@@ -408,13 +446,19 @@ export class JobManager {
   }
 
   #schedulePump(): void {
+    if (this.#shuttingDown) {
+      return;
+    }
     queueMicrotask(() => {
+      if (this.#shuttingDown) {
+        return;
+      }
       void this.#pump();
     });
   }
 
   async #pump(): Promise<void> {
-    if (this.#pumpRunning) {
+    if (this.#pumpRunning || this.#shuttingDown) {
       return;
     }
     this.#pumpRunning = true;
@@ -433,7 +477,12 @@ export class JobManager {
           continue;
         }
         this.#activeCount += 1;
-        void this.#execute(job);
+        const execution = this.#execute(job);
+        this.#executions.set(job.id, execution);
+        void execution.then(
+          () => this.#executions.delete(job.id),
+          () => this.#executions.delete(job.id),
+        );
       }
     } finally {
       this.#pumpRunning = false;
@@ -472,23 +521,36 @@ export class JobManager {
       if (job.cancellationRequested) {
         runtimeResult = { outcome: "cancelled", resultTruncated: false };
       } else {
-        const handle = this.#runtime.start(runtimeRequest, (event) => {
-          this.#applyRuntimeEvent(job, event);
-        });
-        this.#handles.set(job.id, handle);
-        this.#setActivity(job, "working", "codex_started");
-        this.#touch(job);
-        runtimeResult = await handle.completion;
-        this.#handles.delete(job.id);
+        try {
+          const handle = this.#runtime.start(runtimeRequest, (event) => {
+            this.#applyRuntimeEvent(job, event);
+          });
+          this.#handles.set(job.id, handle);
+          this.#setActivity(job, "working", "codex_started");
+          this.#touch(job);
+          runtimeResult = await handle.completion;
+          this.#handles.delete(job.id);
+        } catch {
+          runtimeResult = {
+            outcome: "failed",
+            resultTruncated: false,
+            failure: normalizePublicRuntimeFailure(undefined),
+          };
+        }
       }
 
-      if (runtimeResult.outcome === "completed" && prepared !== undefined) {
+      if (
+        runtimeResult.outcome === "completed" &&
+        !job.cancellationRequested &&
+        prepared !== undefined
+      ) {
         this.#setActivity(job, "finalizing", "validating_proposal");
         this.#touch(job);
         proposal = await prepared.finalize();
       }
       if (
         runtimeResult.outcome === "completed" &&
+        !job.cancellationRequested &&
         job.request.sddReview !== undefined &&
         runtimeResult.finalMessage !== undefined
       ) {
@@ -529,6 +591,12 @@ export class JobManager {
       job.resultTruncated = runtimeResult.resultTruncated;
     }
 
+    if (job.cancellationRequested && failure === undefined) {
+      runtimeResult = { outcome: "cancelled", resultTruncated: false };
+      proposal = undefined;
+      review = undefined;
+    }
+
     if (failure !== undefined) {
       this.#markFailed(job, failure);
     } else if (runtimeResult?.outcome === "completed") {
@@ -554,10 +622,7 @@ export class JobManager {
     } else {
       this.#markFailed(
         job,
-        runtimeResult?.failure ?? {
-          code: ERROR_CODES.RUNTIME_FAILED,
-          message: "Codex ended without a terminal result",
-        },
+        normalizePublicRuntimeFailure(runtimeResult?.failure),
       );
     }
 
@@ -565,6 +630,15 @@ export class JobManager {
     this.#handles.delete(job.id);
     this.#evictHistory();
     this.#schedulePump();
+  }
+
+  #assertAcceptingJobs(): void {
+    if (this.#shuttingDown) {
+      throw new WorkerError(
+        ERROR_CODES.WORKER_SHUTTING_DOWN,
+        "The worker is shutting down and cannot accept new jobs",
+      );
+    }
   }
 
   #applyRuntimeEvent(job: InternalJob, event: RuntimeEvent): void {

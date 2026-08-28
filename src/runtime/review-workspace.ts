@@ -18,6 +18,12 @@ import type { GitClient } from "./git-client.js";
 import { compareGitRevisions } from "./review-comparison.js";
 
 const FULL_REVISION = /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
+export const REVIEW_CLEANUP_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 3,
+  retryDelay: 100,
+} as const;
 
 /**
  * A prepared strict review always executes from a revision-pinned, detached
@@ -324,7 +330,7 @@ export class ReviewWorkspace {
         "Refused to clean a path outside the review workspace directory",
       );
     }
-    await rm(temporaryDirectory, { recursive: true, force: true });
+    await rm(temporaryDirectory, REVIEW_CLEANUP_OPTIONS);
   }
 }
 

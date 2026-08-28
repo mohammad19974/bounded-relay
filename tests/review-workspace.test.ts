@@ -7,7 +7,10 @@ import type { WorkerConfig } from "../src/config/worker-config.js";
 import { ERROR_CODES } from "../src/core/errors.js";
 import type { ResolvedJobRequest } from "../src/core/types.js";
 import { GitClient, type GitResult } from "../src/runtime/git-client.js";
-import { ReviewWorkspace } from "../src/runtime/review-workspace.js";
+import {
+  REVIEW_CLEANUP_OPTIONS,
+  ReviewWorkspace,
+} from "../src/runtime/review-workspace.js";
 import {
   SddReviewService,
   type PreparedSddReview,
@@ -89,6 +92,15 @@ async function prepareReview(
 }
 
 describe("ReviewWorkspace", () => {
+  test("bounds retries for transient review cleanup failures", () => {
+    expect(REVIEW_CLEANUP_OPTIONS).toEqual({
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  });
+
   test("creates a detached revision-pinned clone with no origin or active hooks", async () => {
     const { repository, request, workspace } = await makeHarness();
     const prepared = await workspace.prepare(request);

@@ -1,4 +1,5 @@
 export { loadWorkerConfig, type WorkerConfig } from "./config/worker-config.js";
+export { BOUNDEDRELAY_VERSION } from "./version.js";
 export { ERROR_CODES, WorkerError } from "./core/errors.js";
 export { JobManager, type ListJobsInput } from "./core/job-manager.js";
 export { JOB_ACTIVITIES } from "./core/types.js";

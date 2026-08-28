@@ -11,7 +11,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-7c3aed">
-  <img alt="Node.js 22.13 or newer" src="https://img.shields.io/badge/node-%3E%3D22.13-06b6d4">
+  <img alt="Node.js 22.13+ or 24.x" src="https://img.shields.io/badge/node-22.13%2B%20%7C%2024.x-06b6d4">
   <img alt="MCP transport: stdio" src="https://img.shields.io/badge/MCP-stdio-0f172a">
   <img alt="Default mode: read only" src="https://img.shields.io/badge/default-read--only-22c55e">
 </p>
@@ -56,6 +56,9 @@ audit ledger.
 - **Adaptive work division:** the optional SDD router selects the best versioned
   task-kind/lane fit first, uses preference and a neutral share only after fit
   ties, and emits dependency-safe waves with at most one writer each.
+- **Portable policy profiles:** an opt-in, separate profiled route can apply
+  reviewed capability fit, narrower write scopes, required check digests, and
+  exact Codex policy without executable plugins or broader server authority.
 - **Checkpointed execution:** the optional Spec Kit pack turns a verified route
   into `execution.json`, runs one exact dependency wave at a time, and requires
   each writer checkpoint to be one non-merge commit directly parented by the
@@ -119,7 +122,7 @@ broader, non-ranking [ecosystem comparison](docs/ecosystem-comparison.md).
 
 ## Prerequisites
 
-- Node.js `>=22.13.0` and npm;
+- Node.js `^22.13.0 || ^24.0.0` and npm;
 - Git available on `PATH`;
 - Codex CLI installed and authenticated for the current operating-system user;
 - Claude Code with local stdio MCP support;
@@ -129,6 +132,11 @@ BoundedRelay uses the supported `codex exec --json` non-interactive interface.
 It has no credential input and no credential store. Saved Codex authentication
 is used through the normal user environment; direct API-token forwarding is a
 separate opt-in.
+
+> [!WARNING] Before the first delegation, review the repository and task data
+> you are willing to share. Codex CLI may send task text and repository content
+> it reads to OpenAI under your Codex account and provider settings.
+> BoundedRelay does not make Codex offline or change provider retention terms.
 
 ## Quick start from source
 
@@ -147,6 +155,12 @@ node dist/cli.js doctor
 
 `doctor` checks Node-facing dependencies, Codex command compatibility, Git, and
 Codex login state without making a model call.
+
+The release gate does not stop at testing the TypeScript checkout. It builds an
+actual npm tarball, installs that artifact into an empty consumer, and verifies
+the installed CLI, ESM export, integration pack, and credential-free MCP
+handshake. The same installed-package contract runs in CI on Node 22.13 and 24
+across Linux, macOS, and Windows.
 
 To inspect the packaged Spec Kit and Claude Code integration without installing
 or modifying a consumer repository:
@@ -213,7 +227,7 @@ upgrades, and common setup failures, read the complete
 | --------------------------- | ------------------------------------------------------------------------------------------------- |
 | `codex_worker_capabilities` | Report compatibility, login readiness, effective limits, proposal availability, and warnings.     |
 | `codex_worker_workspace`    | Resolve a directory, its Git boundary, exact revision, cleanliness, and proposal readiness.       |
-| `codex_worker_sdd_route`    | Deterministically route a bounded task DAG without a model call or filesystem write.              |
+| `codex_worker_sdd_route`    | Deterministically route a bounded task DAG through the legacy or strict profiled policy path.     |
 | `codex_worker_sdd_review`   | Queue a fresh structured Codex review after freezing host evidence and sealing exact artifacts.   |
 | `codex_worker_analyze`      | Queue a bounded read-only Codex job; its output is advisory and cannot satisfy a strict SDD gate. |
 | `codex_worker_propose`      | Queue an isolated patch proposal; registered only with `CCW_ENABLE_PROPOSALS=true`.               |
@@ -247,6 +261,12 @@ state, input, output, and failure code.
 - Returns policy versions, lane-fit evidence, decision stages, reasons,
   deviations, safe waves, and a content fingerprint.
 - Never grants direct write authority; each wave has at most one writer.
+
+An optional `projectProfile` uses the separate `sdd-routing-v3` contract. It is
+strict non-executable data and can only specialize capability fit, narrow write
+scopes, require canonical check-profile digests, and resolve Codex-only policy
+inside server configuration. Omit it to preserve the established v0.1 route and
+fingerprint. Read [Portable project profiles](docs/project-profiles.md).
 
 ### Structured SDD review — read-only
 
@@ -350,33 +370,21 @@ measured usage, quality scores, or benchmark results.
 | Execution | Parallel or sequential edits may start from different states and rely on prose scope. | Routing must cover every pending standard task ID exactly once before it creates `execution.json`; each writer wave produces one direct-child non-merge commit whose tested tree is verified.           |
 | Review    | Reviewers may inspect different revisions or trust a summary of what ran.             | High/Critical findings block approval; chained reviews and the proof pack revalidate source history, while convergence may only confirm no new work or require a fresh routed run.                      |
 
-### Illustrative workflow-leverage score
+### Machine-verifiable workflow controls
 
-For a motivating but honest comparison, the scorecard below rates **enforced
-engineering workflow capability**, not model intelligence. The assumed baseline
-is a capable coding assistant working without BoundedRelay's formal controls.
+This table compares enforceable workflow properties, not model intelligence or
+output quality. The local conformance corpus checks routing-policy invariants;
+it makes no provider call and does not measure speed, tokens, price, or code
+correctness.
 
-| Engineering dimension            | Baseline without BoundedRelay | With BoundedRelay | Relative workflow leverage | What changes                                                                                         |
-| -------------------------------- | ----------------------------: | ----------------: | -------------------------: | ---------------------------------------------------------------------------------------------------- |
-| Planning discipline              |                        3.0/10 |            9.0/10 |                       3.0× | The plan is frozen, independently reviewed, revision-bound, and revalidated before routing.          |
-| Task-to-provider fit             |                        4.0/10 |            8.5/10 |                       2.1× | Quality-first routing uses eligibility, risk, fit, dependencies, and a soft—not forced—share.        |
-| Code-writing context and scope   |                        5.0/10 |            8.5/10 |                       1.7× | Writers receive bounded tasks, committed context, explicit ownership, and verified dependencies.     |
-| Parallel-edit safety             |                        3.0/10 |            9.0/10 |                       3.0× | Dependency waves allow at most one writer and require clean, direct-child checkpoints.               |
-| Independent review assurance     |                        3.0/10 |            9.5/10 |                       3.2× | Claude-host and Codex reviews are chained to the same evidence; High/Critical findings always block. |
-| Reproducibility and auditability |                        2.0/10 |            9.5/10 |                       4.8× | Content-addressed evidence, checks, patches, trees, proof packs, and handoff state remain traceable. |
-| **Overall workflow capability**  |                    **3.3/10** |        **9.0/10** |                   **2.7×** | A coordinated, fail-closed path replaces an informal multi-model conversation.                       |
-
-> **How to read this:** `2.7×` is the ratio between the two rubric scores, not a
-> claim that BoundedRelay produces 2.7× better code, runs 2.7× faster, or saves
-> a measured percentage of tokens. Use the included tests and evidence trail,
-> then replace this illustrative score with results from your own repository
-> benchmark.
-
-Rubric: **1–2** ad hoc, **3–4** documented but human-trusted, **5–6** automated
-but loosely bound, **7–8** enforced with partial evidence, and **9–10**
-fail-closed, revision-bound, and independently revalidated. The code-output
-ceiling still depends on the selected models, task clarity, repository quality,
-tests, and human decisions.
+| Dimension             | Informal workflow gap                                         | Enforced control                                                              | Machine-verifiable evidence                                                   | Limitation                                                               |
+| --------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Planning              | Mutable prose can drift after review.                         | Plan evidence is revision-bound and revalidated before routing.               | Artifact digests, revision seals, and strict gate status.                     | A valid plan can still be incomplete or technically wrong.               |
+| Task routing          | Assignment rationale may be implicit or change between runs.  | Hard eligibility and versioned fit precede preferences and neutral balance.   | Canonical input, policy versions, decision stages, reasons, and fingerprint.  | Fit values are policy data, not vendor benchmarks.                       |
+| Write scope           | A writer may receive only a prose ownership hint.             | Write tasks declare repository-relative scopes; proposals are path-validated. | Normalized scopes, changed-path validation, patch digest, and tested tree.    | Host-side compliance remains cooperative until checkpoint validation.    |
+| Concurrent edits      | Parallel writers can race or invalidate each other's base.    | Dependency waves permit at most one writer and require a direct-child commit. | Wave ledger, parent revision, commit shape, and dependency replay.            | The design deliberately trades write parallelism for integration safety. |
+| Independent review    | Reviewers may inspect different content or mutable summaries. | Host evidence is frozen before a fresh Codex review of the same sealed state. | Matching seal, review IDs, structured findings, and freshness recheck.        | Structured approval cannot prove a reviewer found every defect.          |
+| Delivery traceability | Commands and patches may not be tied to the delivered tree.   | Check receipts, proposal bytes, checkpoints, and proof packs are tree-bound.  | Command/output digests, patch-to-tree reconstruction, and proof verification. | Digests are content addresses, not signed CI or identity attestations.   |
 
 The governed path is deliberately sequential at its trust boundaries:
 
@@ -437,10 +445,11 @@ rejected route, execution ledger, review, or proof pack.
 
 Every Codex execution result records `model` and `reasoningEffort` (including
 `null` when the route uses server defaults), and both must exactly match the
-routed policy. A critical Claude-host task forces the subsequent Codex
-cross-review policy to the explicitly allowlisted `gpt-5.6-sol` / `ultra`
-profile; unavailability fails closed. The host model remains whatever the user
-selected in Claude Code.
+routed policy. The legacy no-profile workflow uses its fixed allowlisted
+`gpt-5.6-sol` / `ultra` policy for critical work. A project profile instead
+requires an explicit `codexPolicy.byRisk.critical` pair and never substitutes a
+different model or effort. The host model remains whatever the user selected in
+Claude Code.
 
 Implementation review compares the approved routing base revision with final
 `HEAD` and rejects a scope above 256 changed paths. Convergence is fail-closed:
@@ -463,10 +472,10 @@ the same valid draft is idempotent; it does not re-run provider work.
 
 `claude-host` always means the model selected in Claude Code. BoundedRelay does
 not launch Claude, select Opus/Sonnet, or verify a host-declared model label.
-Every critical route requires one explicitly allowlisted `gpt-5.6-sol` / `ultra`
-Codex lane: execution when Codex owns the task, or cross-review when
-`claude-host` owns it. An unavailable profile fails rather than silently falling
-back.
+For profiled runs, the plan also binds one global Codex cross-review policy from
+the highest routed risk with `risk -> review kind -> default` precedence. Every
+non-null model must be server-allowlisted. Missing or unavailable critical
+policy fails rather than silently falling back.
 
 Use the [complete Spec Kit integration guide](docs/integrations/spec-kit.md) for
 local loading, workflow evidence, strict-gate rules, recovery, and removal.
@@ -516,6 +525,7 @@ enabling proposals.
 - [Security model](docs/security-model.md)
 - [Live status and MCP tools](docs/tool-reference.md)
 - [Configuration](docs/configuration.md)
+- [Portable project profiles](docs/project-profiles.md)
 - [Compatibility](docs/compatibility.md)
 - [Spec Kit integration](docs/integrations/spec-kit.md)
 - [Ecosystem comparison](docs/ecosystem-comparison.md)
