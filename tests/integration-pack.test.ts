@@ -2361,7 +2361,7 @@ describe(
         item,
         "handoff.mjs",
         ["verify", runId],
-        ["--import", win32PlatformImport],
+        process.platform === "win32" ? [] : ["--import", win32PlatformImport],
         {
           ...process.env,
           GIT_TRACE: gitTrace,
