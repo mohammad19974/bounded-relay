@@ -30,6 +30,22 @@ export function fail(message) {
   throw new Error(message);
 }
 
+const MAX_CHILD_DIAGNOSTIC_CHARS = 2_000;
+
+/**
+ * Fails with the child's own diagnostics attached. A nested verification chain
+ * that reports only its own layer is not operable: the real cause is whatever
+ * the child wrote before exiting.
+ */
+export function failChild(message, result) {
+  const detail = [result?.error?.message, result?.stderr, result?.stdout]
+    .filter((value) => typeof value === "string" && value.trim() !== "")
+    .join("\n")
+    .trim()
+    .slice(-MAX_CHILD_DIAGNOSTIC_CHARS);
+  fail(detail === "" ? message : `${message}: ${detail}`);
+}
+
 export function assertSafeIdentifier(value, label = "identifier") {
   if (typeof value !== "string" || !SAFE_IDENTIFIER.test(value)) {
     fail(`${label} is invalid`);
@@ -854,7 +870,7 @@ function compareCodeUnits(left, right) {
 function runGit(cwd, args) {
   const result = spawnGit(cwd, args);
   if (result.error || result.status !== 0) {
-    fail(`Git command failed while sealing workflow evidence`);
+    failChild(`Git command failed while sealing workflow evidence`, result);
   }
   return result.stdout;
 }
@@ -866,7 +882,7 @@ function runGitBuffer(cwd, args) {
     shell: false,
   });
   if (result.error || result.status !== 0) {
-    fail(`Git command failed while sealing workflow evidence`);
+    failChild(`Git command failed while sealing workflow evidence`, result);
   }
   return result.stdout;
 }

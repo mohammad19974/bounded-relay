@@ -116,8 +116,9 @@ Codex subprocess.
 | Revision-pinned patch from a disposable clone, never auto-applied to source            | BoundedRelay             |
 | Persistent jobs, a daemon, remote multi-user service, or an audit ledger               | Not provided by v0.1     |
 
-See the detailed
-[official-plugin comparison](docs/comparison-with-codex-plugin-cc.md) and the
+See the [feature comparison](docs/feature-comparison.md) for a capability-level
+table against the nearest projects, the detailed
+[official-plugin comparison](docs/comparison-with-codex-plugin-cc.md), and the
 broader, non-ranking [ecosystem comparison](docs/ecosystem-comparison.md).
 
 ## Prerequisites

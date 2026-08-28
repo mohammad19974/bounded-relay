@@ -49,10 +49,21 @@ export async function createWorkerApplication(
   });
   await jobs.initialize();
 
+  // Each health collection spawns several probe subprocesses. Concurrent
+  // callers share one round so repeated capability calls cannot multiply them.
+  let inFlightHealth: Promise<WorkerHealth> | undefined;
+
   return {
     config,
     jobs,
     workspaces: new WorkspaceInspector(config, git),
-    health: async () => await collectWorkerHealth(config, environment),
+    health: async () => {
+      inFlightHealth ??= collectWorkerHealth(config, environment).finally(
+        () => {
+          inFlightHealth = undefined;
+        },
+      );
+      return await inFlightHealth;
+    },
   };
 }

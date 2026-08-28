@@ -43,15 +43,25 @@ export function buildCodexInvocation(
     );
   }
 
-  args.push(
-    "exec",
-    "--json",
-    "--ephemeral",
-    "--ignore-user-config",
-    "--ignore-rules",
-    "--color",
-    "never",
-  );
+  args.push("exec");
+  if (request.resumeSessionId !== undefined) {
+    args.push("resume", request.resumeSessionId);
+  }
+  args.push("--json");
+  // A recorded session is what makes a later `exec resume` possible, so
+  // ephemeral execution is dropped only when the caller opted into a
+  // continuable thread.
+  if (
+    request.resumeSessionId === undefined &&
+    request.persistSession !== true
+  ) {
+    args.push("--ephemeral");
+  }
+  args.push("--ignore-user-config", "--ignore-rules");
+  // `exec resume` does not accept `--color`; passing it aborts the run.
+  if (request.resumeSessionId === undefined) {
+    args.push("--color", "never");
+  }
   if (request.sddReview !== undefined) {
     args.push("--output-schema", SDD_REVIEW_OUTPUT_SCHEMA);
   }

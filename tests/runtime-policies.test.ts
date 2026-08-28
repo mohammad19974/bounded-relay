@@ -187,6 +187,52 @@ describe("Codex invocation and prompt isolation", () => {
     expect(invocation.args.join(" ")).not.toContain(injection);
   });
 
+  test("continues a recorded thread and keeps its session resumable", () => {
+    const root = resolve(tmpdir(), "ccw-resume-invocation");
+    const request = makeRequest(root, {
+      executionRoot: root,
+      resumeSessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+    });
+    const invocation = buildCodexInvocation(request, {
+      codexExecutable: "/opt/codex",
+    });
+
+    expect(invocation.args).toEqual([
+      "--strict-config",
+      "--sandbox",
+      "read-only",
+      "--ask-for-approval",
+      "never",
+      "--cd",
+      root,
+      "exec",
+      "resume",
+      "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      "--json",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "-",
+    ]);
+    // `exec resume` rejects `--color`; including it aborts the run.
+    expect(invocation.args).not.toContain("--color");
+    // A resumed turn must stay recorded, otherwise the chain cannot continue.
+    expect(invocation.args).not.toContain("--ephemeral");
+  });
+
+  test("keeps a session recorded when the caller opts in without resuming", () => {
+    const root = resolve(tmpdir(), "ccw-persist-invocation");
+    const request = makeRequest(root, {
+      executionRoot: root,
+      persistSession: true,
+    });
+    const invocation = buildCodexInvocation(request, {
+      codexExecutable: "/opt/codex",
+    });
+
+    expect(invocation.args).not.toContain("--ephemeral");
+    expect(invocation.args).not.toContain("resume");
+  });
+
   test("keeps a shell-free launcher prefix ahead of worker-owned Codex arguments", () => {
     const root = resolve(tmpdir(), "ccw-launcher-invocation");
     const request = makeRequest(root, { executionRoot: root });

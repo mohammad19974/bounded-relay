@@ -11,6 +11,7 @@ import {
   comparisonRevision,
   evidencePath,
   fail,
+  failChild,
   fileDigest,
   hostReviewContextId,
   optionalProjectProfilePath,
@@ -119,7 +120,10 @@ function assertStaticRouting(runId) {
     },
   );
   if (routing.error || routing.status !== 0) {
-    fail("proof pack could not revalidate complete routing evidence");
+    failChild(
+      "proof pack could not revalidate complete routing evidence",
+      routing,
+    );
   }
 }
 
@@ -209,7 +213,10 @@ function assertExecutionHistory(runId) {
     },
   );
   if (execution.error || execution.status !== 0) {
-    fail("proof pack could not revalidate wave execution history");
+    failChild(
+      "proof pack could not revalidate wave execution history",
+      execution,
+    );
   }
 }
 

@@ -7,6 +7,7 @@ import {
   currentGitRevision,
   evidencePath,
   fail,
+  failChild,
   printSuccess,
   readJson,
   requireSchema,
@@ -29,7 +30,7 @@ function verifyImplementationReview(runId) {
     },
   );
   if (result.error || result.status !== 0) {
-    fail(
+    failChild(
       "convergence changed reviewed state; preserve the new tasks and start a fresh approved routing run",
     );
   }

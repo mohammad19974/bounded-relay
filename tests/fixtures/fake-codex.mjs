@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const args = process.argv.slice(2);
+
+// Lets a test count how many probe subprocesses the worker actually spawns.
+if (process.env.FAKE_PROBE_COUNT_PATH) {
+  appendFileSync(process.env.FAKE_PROBE_COUNT_PATH, `${args.join(" ")}\n`);
+}
 
 if (args.length === 1 && args[0] === "--version") {
   process.stdout.write(
@@ -69,6 +74,16 @@ process.stdin.on("end", () => {
     writeFileSync(
       resolve(process.cwd(), "src/allowed.ts"),
       "export const value = 2;\n",
+      "utf8",
+    );
+  }
+
+  // A policy-valid patch that is large enough to expose the MCP wire budget.
+  if (process.env.FAKE_CODEX_SCENARIO === "proposal-large") {
+    const line = `export const value = ${"9".repeat(48)};\n`;
+    writeFileSync(
+      resolve(process.cwd(), "src/allowed.ts"),
+      line.repeat(Math.ceil(6_000_000 / line.length)),
       "utf8",
     );
   }

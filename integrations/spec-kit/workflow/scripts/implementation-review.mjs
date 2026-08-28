@@ -15,6 +15,7 @@ import {
   currentGitRevision,
   evidencePath,
   fail,
+  failChild,
   fileDigest,
   hostReviewContextId,
   optionalProjectProfilePath,
@@ -90,7 +91,10 @@ function assertCurrentExecution(runId) {
     },
   );
   if (execution.error || execution.status !== 0) {
-    fail("implementation review requires revalidated current wave execution");
+    failChild(
+      "implementation review requires revalidated current wave execution",
+      execution,
+    );
   }
 }
 

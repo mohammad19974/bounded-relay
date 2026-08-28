@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { ERROR_CODES } from "../src/core/errors.js";
+import type { ProposalArtifact } from "../src/core/types.js";
 import { GitClient, type GitResult } from "../src/runtime/git-client.js";
 import { ProposalWorkspace } from "../src/runtime/proposal-workspace.js";
 import {
@@ -105,6 +106,62 @@ describe("ProposalWorkspace", () => {
       ).trim(),
     ).toBe("NUL");
     await prepared.cleanup();
+  });
+
+  test("never returns a path that appeared after changed-path validation", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+    });
+    // Stands in for a descendant that survived the run and keeps writing into
+    // the clone while the proposal is being validated.
+    class LateWriterGitClient extends GitClient {
+      public override async run(
+        cwd: string,
+        args: readonly string[],
+        acceptedExitCodes: readonly number[] = [0],
+      ): Promise<GitResult> {
+        const result = await super.run(cwd, args, acceptedExitCodes);
+        if (args[0] === "ls-files" && args[1] === "--others") {
+          await writeFile(join(cwd, "smuggled.txt"), "not validated\n", "utf8");
+        }
+        return result;
+      }
+    }
+    const workspace = new ProposalWorkspace(
+      config,
+      new LateWriterGitClient(config),
+    );
+    await workspace.initialize();
+
+    const prepared = await workspace.prepare(
+      makeRequest(repository.root, {
+        mode: "proposal",
+        expectedRevision: repository.revision,
+        writePaths: ["src"],
+      }),
+    );
+    await writeFile(
+      join(prepared.request.executionRoot, "src", "allowed.ts"),
+      "export const value = 2;\n",
+      "utf8",
+    );
+
+    // Refusing the proposal outright is also correct; smuggling the path into
+    // a returned patch is not.
+    let artifact: ProposalArtifact | undefined;
+    try {
+      artifact = await prepared.finalize();
+    } catch {
+      return;
+    }
+    expect(artifact.changedFiles).not.toContain("smuggled.txt");
+    expect(artifact.patch ?? "").not.toContain("smuggled.txt");
   });
 
   test("creates a clean revision-pinned clone and returns a validated allowed patch", async () => {

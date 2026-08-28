@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -227,6 +227,42 @@ describe.runIf(process.platform !== "win32")(
         authenticated: true,
         proposalsEnabled: false,
       });
+      await application.jobs.shutdown();
+    }, 15_000);
+
+    test("does not multiply probe subprocesses for concurrent health calls", async () => {
+      await ensureExecutable(fakeCodex);
+      const repository = await createTestRepository();
+      cleanupPaths.push(repository.root);
+      const stateDirectory = await makeStateDirectory();
+      cleanupPaths.push(stateDirectory);
+      const counterPath = join(stateDirectory, "probe-count.log");
+      await writeFile(counterPath, "", "utf8");
+      const application = await createWorkerApplication({
+        processDirectory: repository.root,
+        environment: {
+          HOME: process.env.HOME,
+          PATH: process.env.PATH,
+          CCW_ALLOWED_ROOTS: repository.root,
+          CCW_STATE_DIR: stateDirectory,
+          CCW_CODEX_BIN: fakeCodex,
+          CCW_GIT_BIN: "git",
+          CCW_FORWARD_ENV: "FAKE_PROBE_COUNT_PATH",
+          FAKE_PROBE_COUNT_PATH: counterPath,
+        },
+      });
+
+      await Promise.all([
+        application.health(),
+        application.health(),
+        application.health(),
+      ]);
+
+      // One concurrent burst must resolve from a single probe round.
+      const invocations = (await readFile(counterPath, "utf8"))
+        .split("\n")
+        .filter((line) => line !== "");
+      expect(invocations.length).toBeLessThanOrEqual(4);
       await application.jobs.shutdown();
     }, 15_000);
   },

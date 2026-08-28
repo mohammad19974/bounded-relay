@@ -206,7 +206,14 @@ export class ProposalWorkspace {
       );
     }
 
-    const changedFiles = await this.#changedFiles(request.executionRoot);
+    // Stage first, then validate the index. Validating the worktree and
+    // staging afterwards lets anything that writes in between reach the patch
+    // without passing the allowlist, protected-path, or file-mode checks.
+    await this.#git.run(request.executionRoot, ["add", "--all", "--", "."]);
+    const changedFiles = await this.#stagedFiles(
+      request.executionRoot,
+      baselineRevision,
+    );
     if (changedFiles.length > this.#config.maxChangedFiles) {
       throw new WorkerError(
         ERROR_CODES.PATCH_LIMIT_EXCEEDED,
@@ -239,7 +246,6 @@ export class ProposalWorkspace {
       };
     }
 
-    await this.#git.run(request.executionRoot, ["add", "--all", "--", "."]);
     const patchResult = await this.#git.run(request.executionRoot, [
       "diff",
       "--cached",
@@ -275,29 +281,24 @@ export class ProposalWorkspace {
     };
   }
 
-  async #changedFiles(directory: string): Promise<readonly string[]> {
-    const [tracked, untracked] = await Promise.all([
-      this.#git.run(directory, [
-        "diff",
-        "--name-only",
-        "--no-renames",
-        "-z",
-        "HEAD",
-        "--",
-      ]),
-      this.#git.run(directory, [
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-        "-z",
-      ]),
+  /**
+   * The exact path set the patch will carry, read from the staged index so it
+   * cannot drift between validation and diffing.
+   */
+  async #stagedFiles(
+    directory: string,
+    baselineRevision: string,
+  ): Promise<readonly string[]> {
+    const staged = await this.#git.run(directory, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      baselineRevision,
+      "--",
     ]);
-    return [
-      ...new Set([
-        ...parseNullList(tracked.stdout),
-        ...parseNullList(untracked.stdout),
-      ]),
-    ].sort();
+    return [...new Set(parseNullList(staged.stdout))].sort();
   }
 
   async #assertRegularChangedPath(

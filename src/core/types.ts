@@ -58,6 +58,10 @@ export interface StartJobInput {
   readonly reasoningEffort?: ReasoningEffort;
   readonly timeoutMs?: number;
   readonly idempotencyKey?: string;
+  /** Continue a recorded Codex thread instead of starting a new one. */
+  readonly resumeSessionId?: string;
+  /** Keep this run's Codex session on disk so it can be resumed later. */
+  readonly persistSession?: boolean;
 }
 
 export interface ResolvedJobRequest {
@@ -74,6 +78,8 @@ export interface ResolvedJobRequest {
   readonly timeoutMs: number;
   readonly idempotencyKey?: string;
   readonly sddReview?: PreparedSddReview;
+  readonly resumeSessionId?: string;
+  readonly persistSession?: boolean;
 }
 
 export interface UsageSummary {
