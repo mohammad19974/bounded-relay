@@ -350,6 +350,34 @@ measured usage, quality scores, or benchmark results.
 | Execution | Parallel or sequential edits may start from different states and rely on prose scope. | Routing must cover every pending standard task ID exactly once before it creates `execution.json`; each writer wave produces one direct-child non-merge commit whose tested tree is verified.           |
 | Review    | Reviewers may inspect different revisions or trust a summary of what ran.             | High/Critical findings block approval; chained reviews and the proof pack revalidate source history, while convergence may only confirm no new work or require a fresh routed run.                      |
 
+### Illustrative workflow-leverage score
+
+For a motivating but honest comparison, the scorecard below rates **enforced
+engineering workflow capability**, not model intelligence. The assumed baseline
+is a capable coding assistant working without BoundedRelay's formal controls.
+
+| Engineering dimension            | Baseline without BoundedRelay | With BoundedRelay | Relative workflow leverage | What changes                                                                                         |
+| -------------------------------- | ----------------------------: | ----------------: | -------------------------: | ---------------------------------------------------------------------------------------------------- |
+| Planning discipline              |                        3.0/10 |            9.0/10 |                       3.0× | The plan is frozen, independently reviewed, revision-bound, and revalidated before routing.          |
+| Task-to-provider fit             |                        4.0/10 |            8.5/10 |                       2.1× | Quality-first routing uses eligibility, risk, fit, dependencies, and a soft—not forced—share.        |
+| Code-writing context and scope   |                        5.0/10 |            8.5/10 |                       1.7× | Writers receive bounded tasks, committed context, explicit ownership, and verified dependencies.     |
+| Parallel-edit safety             |                        3.0/10 |            9.0/10 |                       3.0× | Dependency waves allow at most one writer and require clean, direct-child checkpoints.               |
+| Independent review assurance     |                        3.0/10 |            9.5/10 |                       3.2× | Claude-host and Codex reviews are chained to the same evidence; High/Critical findings always block. |
+| Reproducibility and auditability |                        2.0/10 |            9.5/10 |                       4.8× | Content-addressed evidence, checks, patches, trees, proof packs, and handoff state remain traceable. |
+| **Overall workflow capability**  |                    **3.3/10** |        **9.0/10** |                   **2.7×** | A coordinated, fail-closed path replaces an informal multi-model conversation.                       |
+
+> **How to read this:** `2.7×` is the ratio between the two rubric scores, not a
+> claim that BoundedRelay produces 2.7× better code, runs 2.7× faster, or saves
+> a measured percentage of tokens. Use the included tests and evidence trail,
+> then replace this illustrative score with results from your own repository
+> benchmark.
+
+Rubric: **1–2** ad hoc, **3–4** documented but human-trusted, **5–6** automated
+but loosely bound, **7–8** enforced with partial evidence, and **9–10**
+fail-closed, revision-bound, and independently revalidated. The code-output
+ceiling still depends on the selected models, task clarity, repository quality,
+tests, and human decisions.
+
 The governed path is deliberately sequential at its trust boundaries:
 
 ```mermaid

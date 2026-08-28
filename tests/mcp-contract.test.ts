@@ -1,5 +1,6 @@
 import { chmod, rm } from "node:fs/promises";
 import { delimiter, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -300,14 +301,14 @@ async function startTestClient(
       : { CCW_FORWARD_ENV: "FAKE_CODEX_SCENARIO" }),
     ...(scenario === undefined ? {} : { FAKE_CODEX_SCENARIO: scenario }),
   });
+  // `--import` accepts an ESM specifier. A raw Windows drive path is parsed as
+  // a custom URL scheme (for example, `D:`), so always provide a file URL.
+  const tsxLoader = pathToFileURL(
+    resolve("node_modules/tsx/dist/loader.mjs"),
+  ).href;
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [
-      "--import",
-      resolve("node_modules/tsx/dist/loader.mjs"),
-      resolve("src/cli.ts"),
-      "serve",
-    ],
+    args: ["--import", tsxLoader, resolve("src/cli.ts"), "serve"],
     cwd: repository.root,
     env: environment,
     stderr: "pipe",
