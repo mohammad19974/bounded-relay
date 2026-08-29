@@ -31,11 +31,22 @@
         { "type": "null" },
         {
           "type": "object",
-          "required": ["wave", "baselineRevision", "startedAt"],
+          "required": [
+            "wave",
+            "baselineRevision",
+            "startedAt",
+            "checkExecution"
+          ],
           "properties": {
             "wave": { "type": "integer", "minimum": 1, "maximum": 64 },
             "baselineRevision": { "$ref": "#/$defs/revision" },
-            "startedAt": { "type": "string", "format": "date-time" }
+            "startedAt": { "type": "string", "format": "date-time" },
+            "checkExecution": {
+              "anyOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/checkExecution" }
+              ]
+            }
           },
           "additionalProperties": false
         }
@@ -49,7 +60,7 @@
     },
     "results": {
       "type": "array",
-      "description": "Canonical task results. Writer checks are runtime-capped at 256 receipts across the complete execution.",
+      "description": "Canonical task results. Active-wave caller receipts are untrusted and atomically replaced by workflow-executed receipts for the sealed required profiles. Writer checks are runtime-capped at 256 receipts across the complete execution.",
       "maxItems": 64,
       "items": { "$ref": "#/$defs/result" }
     },
@@ -91,7 +102,7 @@
       ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
-        "source": { "const": "host-executed" },
+        "source": { "enum": ["host-executed", "workflow-executed"] },
         "profile": { "$ref": "#/$defs/id" },
         "commandLabel": { "type": "string", "minLength": 1, "maxLength": 512 },
         "commandSha256": { "$ref": "#/$defs/sha256" },
@@ -102,6 +113,32 @@
         "testedTree": { "$ref": "#/$defs/revision" },
         "startedAt": { "type": "string", "format": "date-time" },
         "completedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "checkExecution": {
+      "type": "object",
+      "required": [
+        "writerTaskId",
+        "completedRevision",
+        "testedTree",
+        "profileFingerprint",
+        "requiredChecksSha256",
+        "receiptsSha256",
+        "resultsSha256",
+        "verifiedAt"
+      ],
+      "properties": {
+        "writerTaskId": { "type": ["string", "null"] },
+        "completedRevision": { "$ref": "#/$defs/revision" },
+        "testedTree": { "$ref": "#/$defs/revision" },
+        "profileFingerprint": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "requiredChecksSha256": { "$ref": "#/$defs/sha256" },
+        "receiptsSha256": { "$ref": "#/$defs/sha256" },
+        "resultsSha256": { "$ref": "#/$defs/sha256" },
+        "verifiedAt": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     },
@@ -202,6 +239,7 @@
         "diffSha256",
         "resultsSha256",
         "checksSha256",
+        "checkExecution",
         "verifiedAt"
       ],
       "properties": {
@@ -218,6 +256,7 @@
         "diffSha256": { "$ref": "#/$defs/sha256" },
         "resultsSha256": { "$ref": "#/$defs/sha256" },
         "checksSha256": { "$ref": "#/$defs/sha256" },
+        "checkExecution": { "$ref": "#/$defs/checkExecution" },
         "verifiedAt": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false

@@ -56,8 +56,9 @@ visibility:
 - `thread.started` for session ID;
 - `turn.started` for observed work activity;
 - `item.started` and `item.completed` for sanitized activity categories;
-- completed command items for command counts and completed agent-message items
-  for the final response;
+- completed command items for command counts and for their documented
+  `status`/`exit_code` execution outcome, plus completed agent-message items for
+  the final response;
 - `turn.completed` for terminal state and usage;
 - `turn.failed` and `error` for failure state.
 
@@ -67,7 +68,9 @@ as `unknown` and maps to `working`. This forward-compatible behavior avoids
 failing merely because Codex adds an event while preventing provider-controlled
 identifiers or payload fields from becoming a public status contract. Malformed
 JSON, an event without a string type, a missing terminal event, or a missing
-final message fails closed.
+final message fails closed. A strict SDD review also fails if it cannot observe
+one successfully completed inspection command; an all-failed command set fails
+even when the outer Codex process exits zero.
 
 Official behavior is documented in OpenAI's
 [non-interactive mode guide](https://developers.openai.com/codex/noninteractive/).

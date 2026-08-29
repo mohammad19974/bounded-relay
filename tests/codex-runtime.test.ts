@@ -444,6 +444,98 @@ describe.runIf(process.platform !== "win32")(
       });
     });
 
+    test("fails closed when Codex exits zero after every command execution failed", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(runtimeConfig(), {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "failed-command-outer-zero",
+      });
+
+      await expect(
+        runtime.start(makeRequest(root), () => undefined).completion,
+      ).resolves.toMatchObject({
+        outcome: "failed",
+        resultTruncated: false,
+        failure: {
+          code: ERROR_CODES.RUNTIME_FAILED,
+          message: "Codex command execution failed",
+        },
+      });
+    });
+
+    test("allows a generic analysis to recover after a failed exploratory command", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(runtimeConfig(), {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "failed-then-successful-command",
+      });
+
+      await expect(
+        runtime.start(makeRequest(root), () => undefined).completion,
+      ).resolves.toMatchObject({
+        outcome: "completed",
+        finalMessage: "Recovered after a failed probe.",
+        resultTruncated: false,
+      });
+    });
+
+    test("fails an SDD review that produced a verdict without one successful inspection command", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(runtimeConfig(), {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "unsafe-event-type",
+      });
+
+      await expect(
+        runtime.start(
+          makeRequest(root, {
+            sddReview: { seal: { mode: "strict" } } as NonNullable<
+              ReturnType<typeof makeRequest>["sddReview"]
+            >,
+          }),
+          () => undefined,
+        ).completion,
+      ).resolves.toMatchObject({
+        outcome: "failed",
+        resultTruncated: false,
+        failure: {
+          code: ERROR_CODES.RUNTIME_FAILED,
+          message: "Codex command execution failed",
+        },
+      });
+    });
+
+    test("preserves draft SDD review compatibility when no inspection command is emitted", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(runtimeConfig(), {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "unsafe-event-type",
+      });
+
+      await expect(
+        runtime.start(
+          makeRequest(root, {
+            sddReview: { seal: { mode: "draft" } } as NonNullable<
+              ReturnType<typeof makeRequest>["sddReview"]
+            >,
+          }),
+          () => undefined,
+        ).completion,
+      ).resolves.toMatchObject({
+        outcome: "completed",
+        finalMessage: "safe final",
+        resultTruncated: false,
+      });
+    });
+
     test.each([
       ["failure-event", "Codex reported a failed turn"],
       ["error-event", "Codex reported a failed turn"],

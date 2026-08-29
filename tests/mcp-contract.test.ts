@@ -320,6 +320,141 @@ describe("MCP stdio contract", () => {
     }
   }, 20_000);
 
+  it("marks a completed but blocked SDD review result as an MCP error while preserving the review", async () => {
+    const testClient = await startTestClient(false, "sdd-review-approved");
+    try {
+      const submitted = await testClient.client.callTool({
+        name: "codex_worker_sdd_review",
+        arguments: {
+          phase: "plan",
+          mode: "strict",
+          cwd: testClient.repository.root,
+          artifactPaths: ["README.md"],
+          expectedRevision: testClient.repository.revision,
+          hostReview: {
+            reviewId: "claude-plan-review-blocked",
+            verdict: "changes-requested",
+            summary: "The host review found a blocking plan defect.",
+            findings: [
+              {
+                id: "host-plan-blocker",
+                severity: "high",
+                requirement: "The plan must satisfy the review contract.",
+                summary: "The plan omits a required failure-path check.",
+                artifactPath: "README.md",
+                line: 1,
+                nextAction: "Add and verify the missing failure-path check.",
+              },
+            ],
+          },
+        },
+      });
+      const jobId = String(asRecord(submitted.structuredContent).id);
+      await waitForMcpTerminal(testClient.client, jobId);
+
+      const result = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ready: true,
+        job: { status: "completed" },
+        finalMessage: "The independently reviewed artifacts satisfy the gate.",
+        review: {
+          gate: {
+            passed: false,
+            status: "blocked",
+          },
+        },
+      });
+      const review = asRecord(asRecord(result.structuredContent).review);
+      const gate = asRecord(review.gate);
+      const reasons = asStringArray(gate.reasons);
+      expect(reasons).toContain("host-changes-requested");
+    } finally {
+      await testClient.close();
+    }
+  }, 20_000);
+
+  it("marks an all-commands-failed terminal result as an MCP error while preserving the failure payload", async () => {
+    const testClient = await startTestClient(
+      false,
+      "failed-command-outer-zero",
+    );
+    try {
+      const submitted = await testClient.client.callTool({
+        name: "codex_worker_analyze",
+        arguments: {
+          task: "Exercise the failed terminal result contract.",
+          cwd: testClient.repository.root,
+        },
+      });
+      const jobId = String(asRecord(submitted.structuredContent).id);
+      await waitForMcpTerminal(testClient.client, jobId, "failed");
+
+      const result = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ready: true,
+        job: {
+          status: "failed",
+          error: {
+            code: "RUNTIME_FAILED",
+            message: "Codex command execution failed",
+          },
+        },
+      });
+    } finally {
+      await testClient.close();
+    }
+  }, 20_000);
+
+  it("keeps nonterminal result retrieval successful but marks the cancelled terminal result as an MCP error", async () => {
+    const testClient = await startTestClient(false, "cancel");
+    try {
+      const submitted = await testClient.client.callTool({
+        name: "codex_worker_analyze",
+        arguments: {
+          task: "Exercise the cancelled terminal result contract.",
+          cwd: testClient.repository.root,
+        },
+      });
+      const jobId = String(asRecord(submitted.structuredContent).id);
+
+      const pending = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId },
+      });
+      expect(pending.isError).not.toBe(true);
+      expect(pending.structuredContent).toMatchObject({ ready: false });
+
+      await testClient.client.callTool({
+        name: "codex_worker_cancel",
+        arguments: { jobId },
+      });
+      await waitForMcpTerminal(testClient.client, jobId, "cancelled");
+
+      const result = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ready: true,
+        job: {
+          status: "cancelled",
+          error: { code: "CANCELLED" },
+        },
+      });
+    } finally {
+      await testClient.close();
+    }
+  }, 20_000);
+
   it("returns proposal metadata first and patch text only on explicit request", async () => {
     const testClient = await startTestClient(true, "proposal");
     try {
@@ -535,6 +670,7 @@ async function startTestClient(
 async function waitForMcpTerminal(
   client: Client,
   jobId: string,
+  expectedStatus = "completed",
 ): Promise<void> {
   let afterRevision: number | undefined;
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -555,7 +691,7 @@ async function waitForMcpTerminal(
     }
     afterRevision = revision;
     if (["completed", "failed", "cancelled"].includes(String(status))) {
-      expect(status).toBe("completed");
+      expect(status).toBe(expectedStatus);
       return;
     }
   }
@@ -567,6 +703,13 @@ function asRecord(value: unknown): Record<string, unknown> {
     throw new TypeError("Expected an object in the MCP response");
   }
   return value as Record<string, unknown>;
+}
+
+function asStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new TypeError("Expected an array of strings in the MCP response");
+  }
+  return value;
 }
 
 function extractText(value: unknown): string {

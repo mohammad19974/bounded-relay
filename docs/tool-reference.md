@@ -1,7 +1,8 @@
 # MCP Tool Reference
 
-All tools return JSON in a text content block and as MCP structured content. On
-failure, the tool sets `isError: true` and returns:
+All tools return JSON in a text content block and as MCP structured content. If
+a request fails validation, policy, lookup, or execution before it can return
+its normal payload, the tool sets `isError: true` and returns:
 
 ```json
 {
@@ -11,6 +12,10 @@ failure, the tool sets `isError: true` and returns:
   }
 }
 ```
+
+`codex_worker_result` also uses `isError: true` for an unsuccessful retrieved
+job or SDD gate while preserving the normal structured job/review payload for
+diagnosis; see its result semantics below.
 
 Tool calls cannot change server configuration. `cwd` values must resolve inside
 the startup allowlist and an existing Git repository.
@@ -323,8 +328,9 @@ evidence, and:
 ```
 
 Only `passed: true` with `status: "ready"` on a strict seal satisfies the gate.
-A completed job can legitimately return `blocked` or `stale`. Changing HEAD,
-clean state, or one reviewed byte invalidates the gate. Generic
+A completed job can legitimately return `blocked` or `stale`; retrieving either
+result sets MCP `isError: true` while retaining the complete review artifact.
+Changing HEAD, clean state, or one reviewed byte invalidates the gate. Generic
 `codex_worker_analyze` output cannot substitute for this artifact.
 
 ## `codex_worker_analyze`
@@ -424,7 +430,20 @@ returns a percentage or ETA.
 ## `codex_worker_result`
 
 Returns `{ "ready": false, "job": ... }` while a job is non-terminal. Terminal
-jobs return the snapshot and available final message or failure information.
+jobs return the snapshot and available final message or failure information. The
+MCP outcome is classified from that payload:
+
+- non-terminal retrieval remains `isError: false`;
+- a successfully completed ordinary job remains `isError: false`;
+- a completed SDD review is successful only when `review.gate.passed` is exactly
+  `true`; and
+- a `failed` or `cancelled` job, or a completed SDD review whose gate did not
+  pass, sets `isError: true`.
+
+Semantic failure does not replace the result with a generic error object. The
+response retains `ready`, the complete public `job` snapshot, and any available
+`finalMessage`, `proposal`, or `review`, so callers can report the actual
+failed, cancelled, blocked, or stale outcome.
 
 An SDD review result also includes the validated `review` artifact described
 above. `finalMessage` is its normalized Codex summary. Gate readiness comes from

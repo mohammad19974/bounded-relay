@@ -44,6 +44,18 @@ model or guessing its security limits.
 **Independent test**: Validate manifests, packaged files, setup instructions,
 safe defaults, and a credential-free first run from a clean fixture repository.
 
+### User Story 5 - Fail closed on unexecuted or failed verification (P1)
+
+As a developer, I want BoundedRelay to distinguish an optimistic final message
+from successful command execution so that a failed, missing, timed-out, or
+fabricated check can never be reported as a successful review or workflow run.
+
+**Independent test**: Make Codex emit a failed `command_execution` item and a
+successful outer exit/final message, then prove the job fails. Prefill a writer
+result with a forged zero-exit receipt, then prove the workflow replaces it only
+after executing the sealed required command and refuses nonzero, missing, and
+timed-out commands without advancing the wave or proof pack.
+
 ## Functional Requirements
 
 - **FR-001**: The system MUST represent the Claude executor only as
@@ -80,7 +92,9 @@ safe defaults, and a credential-free first run from a clean fixture repository.
   proposals MUST be serialized, and BoundedRelay MUST never apply them
   automatically.
 - **FR-013**: The integration MUST preserve all existing v0.1 MCP tools and add
-  SDD tools without changing their established behavior.
+  SDD tools without changing their established behavior, except that documented
+  false-success outcomes MUST fail closed while retaining the same structured
+  diagnostic payload.
 - **FR-014**: The workflow MUST record run-local structured routing, execution,
   review, check, proof-pack, and handoff evidence, validate it separately, and
   exclude it from versioned governance state.
@@ -132,6 +146,19 @@ safe defaults, and a credential-free first run from a clean fixture repository.
 - **FR-029**: The final handoff MUST be machine-bound to the verified proof-pack
   digest, bundle fingerprint, and final Git revision. Publication MUST occur
   only after revalidation and MUST be safe to retry after a lost response.
+- **FR-030**: Runtime completion MUST consume completed Codex command status and
+  exit-code evidence. When every attempted command failed, a zero outer process
+  exit or optimistic final message MUST NOT produce a successful job. A strict
+  SDD review MUST include at least one successful inspection command.
+- **FR-031**: The optional workflow MUST execute every sealed required writer
+  check through a workflow-owned, shell-free, time- and output-bounded runner.
+  Required-check receipts MUST be derived from the actual captured process
+  result; caller-authored, missing, nonzero, unavailable, or timed-out evidence
+  MUST NOT advance execution or enter an approved proof pack.
+- **FR-032**: `codex_worker_result` MUST mark failed or cancelled terminal jobs
+  and completed SDD reviews with a non-passing gate as MCP errors while
+  preserving their complete structured diagnostic payload. Nonterminal and
+  genuinely successful results MUST remain successful retrievals.
 
 ## Edge Cases
 
@@ -157,6 +184,11 @@ safe defaults, and a credential-free first run from a clean fixture repository.
 - Convergence discovers new implementation work after the approved execution.
 - Handoff publication succeeds but the caller retries after losing the success
   response.
+- Codex exits zero after one or more internal commands fail and its final message
+  incorrectly claims that checks passed.
+- A coordinator pre-populates structurally valid check receipts although the
+  profiled command was never started, cannot be found, requires unavailable
+  network access, exits nonzero, or exceeds the runner deadline.
 
 ## Assumptions
 
@@ -193,3 +225,7 @@ safe defaults, and a credential-free first run from a clean fixture repository.
 - **SC-008**: Convergence writes, approved High/Critical findings, tampered
   post-proof evidence, and a handoff marker mismatch MUST fail before delivery;
   retrying an already-published exact handoff MUST succeed idempotently.
+- **SC-009**: Credential-free regressions MUST prove that nested command failure,
+  forged receipts, missing executables, nonzero exits, and check timeouts cannot
+  be surfaced as successful MCP results, completed waves, or approved proof
+  packs.

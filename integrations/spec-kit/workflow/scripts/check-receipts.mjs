@@ -52,8 +52,13 @@ export function assertCheckReceipts(
       fail(`${label} repeats receipt id ${receipt.id}`);
     }
     ids.add(receipt.id);
-    if (receipt.source !== "host-executed") {
-      fail(`${label}[${index}].source must be host-executed`);
+    if (
+      receipt.source !== "host-executed" &&
+      receipt.source !== "workflow-executed"
+    ) {
+      fail(
+        `${label}[${index}].source must be host-executed or workflow-executed`,
+      );
     }
     assertSafeIdentifier(receipt.profile, `${label}[${index}].profile`);
     if (

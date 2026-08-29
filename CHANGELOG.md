@@ -108,6 +108,16 @@ contracts are validated.
   versions and selection order rather than arbitrary non-empty labels.
 - Every packaged human gate now aborts on rejection. A correction requires a
   fresh workflow run and a new evidence chain.
+- Runtime completion now evaluates nested Codex command status and exit codes:
+  an outer zero exit and optimistic final message cannot make an all-failed
+  command set successful, and specialized SDD reviews require a successful
+  inspection command.
+- `codex_worker_result` now marks failed/cancelled jobs and completed SDD reviews
+  with non-passing gates as MCP errors while preserving their structured result
+  payloads.
+- The Spec Kit workflow now executes sealed required writer checks in an
+  explicit shell-free, time/output-bounded step and derives their receipts from
+  captured process results instead of trusting prefilled success evidence.
 
 ### Security
 
