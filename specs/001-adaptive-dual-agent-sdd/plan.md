@@ -66,6 +66,17 @@ Claude-to-BoundedRelay-to-Codex topology and every v0.1 tool.
 12. Treat proof packs as verifiable indexes, not trusted summaries: assembly and
     verification rerun authoritative routing, strict review, historical
     execution, and final freshness checks.
+13. Treat the Codex process exit and final prose as insufficient completion
+    evidence. Parse completed command items, fail when all attempted commands
+    failed, and require a successful inspection command for specialized SDD
+    review.
+14. Move sealed required writer checks into an explicit workflow-owned execution
+    boundary. Run canonical `argv` arrays without a shell, within the sealed
+    repository working directory and fixed resource bounds, then atomically
+    publish runner-derived receipts for gate and proof validation.
+15. Preserve complete result payloads while classifying terminal job failure or
+    a blocked/stale SDD gate as an MCP error so clients cannot confuse retrieval
+    success with semantic success.
 
 ## Source Scope
 
@@ -109,14 +120,22 @@ consumer workflow in run-local validators.
   prompts.
 - Structured Codex output is parsed strictly; Markdown fences and malformed JSON
   fail.
+- Completed Codex command items are classified from their status and exit code.
+  An optimistic final message and outer exit zero cannot override an all-failed
+  command set; a strict SDD review without a successful inspection fails.
 - A review job may complete while its gate verdict is not approved; workflow
-  verification blocks.
+  verification blocks, and result retrieval reports the non-passing gate as an
+  MCP error while retaining the review artifact.
 - No raw host review, task prompt, or lease token appears in live status.
 - Human rejection aborts the run. It never silently repeats a provider call or
   reuses stale review evidence.
 - Host-side write isolation is cooperative during editing; the next wave is
   blocked unless the resulting clean committed diff exactly matches the routed
   writer lease.
+- Profile parsing and routing remain non-executable. Only the explicitly
+  authorized workflow check step executes sealed required writer commands; it
+  uses `shell: false`, bounded output and duration, and publishes no successful
+  receipt until every required command succeeds.
 
 ## Verification Plan
 
@@ -129,6 +148,9 @@ consumer workflow in run-local validators.
    checks, and proof revalidation.
 5. `git diff --check`, independent read-only review, convergence audit, and
    handoff refresh.
+6. Dedicated false-success regressions for outer-zero/nested-failure JSONL,
+   terminal MCP result classification, forged workflow receipts, nonzero checks,
+   missing executables, and timeouts.
 
 ## Rollback
 

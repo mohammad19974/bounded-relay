@@ -44,6 +44,9 @@ actions.
   parsed, and bounded.
 - Jobs have configured timeouts and cancellation terminates the child process
   tree.
+- The runtime treats completed command status and exit codes as correctness
+  evidence: a zero outer Codex exit and optimistic final message cannot override
+  a run in which every attempted command failed.
 - A delegation-depth marker prevents the worker from recursively starting itself
   through Codex.
 - When `reasoningEffort` is explicitly `ultra`, the worker prompt permits only
@@ -96,7 +99,12 @@ A check profile may hold bounded argument-vector and repository-relative
 working-directory data so later receipts can match a canonical command digest.
 Validation and routing never run those arguments, invoke a shell, load a module,
 read a repository, or access the network. Reviewing and executing a check
-remains a separate coordinator action.
+remains a separate authority boundary. In the optional Spec Kit workflow, only
+the explicit post-checkpoint required-check step executes the reviewed sealed
+vectors. It uses an argument array with `shell: false`, a canonical
+repository-bounded working directory, fixed time/output limits, and atomic
+runner-derived receipts. A caller-authored receipt cannot substitute for that
+required execution.
 
 The profile fingerprint and profiled route fingerprint are SHA-256 content
 addresses. They show equality of canonical policy content, not author identity,
@@ -125,12 +133,17 @@ The specialized review path enforces these additional controls:
 - raw Codex review output must be one unfenced JSON object, at most 64 KiB, with
   at most 100 bounded findings;
 - finalization rechecks Git state and every artifact before evaluating the gate.
+- the Codex invocation must contain at least one successfully completed
+  inspection command; a structured verdict without successful inspection fails
+  the job before gate evaluation.
 
 The gate fails closed when evidence is missing, malformed, stale, belongs to a
 different seal or phase, reuses a review ID, requests changes, or came from
 draft mode. A job can complete successfully while its gate remains blocked or
-stale. Host evidence is an attestation supplied by the host; BoundedRelay does
-not authenticate Claude, launch it, or verify a declared model label.
+stale internally, but `codex_worker_result` marks that non-passing terminal
+result as an MCP error while preserving the review artifact. Host evidence is
+an attestation supplied by the host; BoundedRelay does not authenticate Claude,
+launch it, or verify a declared model label.
 
 ### Proposal mode
 
@@ -207,6 +220,10 @@ private chain-of-thought are not copied into status. Every unrecognized event
 identifier becomes `unknown` and maps to `working`. Session identifiers are
 exposed only when they match the bounded public identifier format. A status
 label is observability metadata, not a correctness or safety claim.
+
+Terminal result retrieval is also semantic: failed and cancelled jobs, plus
+completed SDD reviews whose gate is blocked or stale, set MCP `isError: true`
+without replacing the bounded structured diagnostic payload.
 
 ### Resource limits
 

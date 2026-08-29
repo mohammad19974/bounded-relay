@@ -152,6 +152,7 @@ async function configureProjectProfile(
   item: Fixture,
   selectedLane: "codex" | "claude-host" = "claude-host",
   requiredCheckCount = 1,
+  primaryCheckArgv: readonly string[] = ["node", "--version"],
 ): Promise<{
   readonly path: string;
   readonly repositoryPath: string;
@@ -164,11 +165,7 @@ async function configureProjectProfile(
     {
       id: "fixture-check",
       cwd: ".",
-      argv: [
-        "node",
-        "-e",
-        "require('fs').writeFileSync('PROFILE_ARGV_EXECUTED', 'unsafe')",
-      ],
+      argv: primaryCheckArgv,
     },
     {
       id: "optional-check",
@@ -235,6 +232,7 @@ async function completeProfiledRouting(
     readonly requiredCheckCount?: number;
     readonly risk?: "low" | "medium" | "high" | "critical";
     readonly codexPolicy?: SddProjectProfileInput["codexPolicy"];
+    readonly primaryCheckArgv?: readonly string[];
   } = {},
 ): Promise<{
   readonly profilePath: string;
@@ -248,6 +246,7 @@ async function completeProfiledRouting(
     item,
     selectedLane,
     options.requiredCheckCount ?? 1,
+    options.primaryCheckArgv,
   );
   const profile: SddProjectProfileInput =
     options.codexPolicy === undefined
@@ -1313,13 +1312,15 @@ describe(
       expect(legacy.status, legacy.stderr).toBe(0);
     }, 30_000);
 
-    test("enforces profiled routing and exact tree-bound checks without executing argv", async () => {
+    test("enforces profiled routing and exact tree-bound workflow checks", async () => {
       const item = await fixture();
       await completeProfiledRouting(item);
       await expect(
         readFile(join(item.root, "PROFILE_ARGV_EXECUTED"), "utf8"),
       ).rejects.toThrow();
       const checkpoint = await prepareProfiledHostCheckpoint(item);
+      const checks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(checks.status, checks.stderr).toBe(0);
       const verified = script(item, "execution.mjs", ["verify-wave", runId]);
       expect(verified.status, verified.stderr).toBe(0);
       expect(script(item, "execution.mjs", ["verify", runId]).status).toBe(0);
@@ -1399,10 +1400,49 @@ describe(
       expect(
         (checkpoint.document.results as Record<string, unknown>[])[0],
       ).toMatchObject({ checks: [{ profile: "fixture-check" }] });
-      await expect(
-        readFile(join(item.root, "PROFILE_ARGV_EXECUTED"), "utf8"),
-      ).rejects.toThrow();
     }, 120_000);
+
+    test("executes sealed required profile checks instead of accepting forged success receipts", async () => {
+      const item = await fixture();
+      await completeProfiledRouting(item, {
+        primaryCheckArgv: ["node", "--version"],
+      });
+      const checkpoint = await prepareProfiledHostCheckpoint(item);
+      const forgedResult = required(
+        (checkpoint.document.results as Record<string, unknown>[])[0],
+        "forged writer result",
+      );
+      const forgedReceipt = required(
+        (forgedResult.checks as Record<string, unknown>[])[0],
+        "forged writer receipt",
+      );
+      expect(forgedReceipt.stdoutSha256).toBe("b".repeat(64));
+
+      const checks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(checks.status, checks.stderr).toBe(0);
+      const verified = script(item, "execution.mjs", ["verify-wave", runId]);
+      expect(verified.status, verified.stderr).toBe(0);
+
+      const execution = await json(checkpoint.path);
+      const verifiedResult = required(
+        (execution.results as Record<string, unknown>[])[0],
+        "verified writer result",
+      );
+      const receipt = required(
+        (verifiedResult.checks as Record<string, unknown>[])[0],
+        "engine-generated writer receipt",
+      );
+      const expectedStdout = execFileSync("node", ["--version"]);
+      expect(receipt).toMatchObject({
+        source: "workflow-executed",
+        profile: checkpoint.requiredCheck.id,
+        commandSha256: checkpoint.requiredCheck.commandSha256,
+        cwd: checkpoint.requiredCheck.cwd,
+        exitCode: 0,
+        stdoutSha256: createHash("sha256").update(expectedStdout).digest("hex"),
+      });
+      expect(receipt.id).not.toBe(forgedReceipt.id);
+    }, 75_000);
 
     test("rejects tampered profiled projections, model policy, and profile bytes", async () => {
       const item = await fixture();

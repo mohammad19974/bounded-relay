@@ -17,3 +17,7 @@
       are content-bound.
 - [x] Human rejection aborts instead of retrying stale evidence or repeating
       provider calls.
+- [x] Outer process success is explicitly separated from nested command and SDD
+      gate success.
+- [x] Required workflow checks have an engine-owned execution and receipt
+      provenance contract with bounded failure cases.

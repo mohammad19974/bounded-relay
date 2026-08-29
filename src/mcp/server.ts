@@ -443,9 +443,10 @@ export async function startMcpServer(
       },
     },
     async ({ jobId, includePatch }) =>
-      await safeResult(async () =>
-        presentJobResult(application.jobs.result(jobId), includePatch),
-      ),
+      await safeResult(async () => application.jobs.result(jobId), {
+        present: (result) => presentJobResult(result, includePatch),
+        isError: isUnsuccessfulJobResult,
+      }),
   );
 
   server.registerTool(
@@ -538,6 +539,20 @@ function presentJobResult(result: JobResult, includePatch: boolean): unknown {
   };
 }
 
+function isUnsuccessfulJobResult(result: JobResult): boolean {
+  if (!result.ready) {
+    return false;
+  }
+  if (result.job.status === "failed" || result.job.status === "cancelled") {
+    return true;
+  }
+  return (
+    result.job.status === "completed" &&
+    result.job.sddReview !== undefined &&
+    result.review?.gate.passed !== true
+  );
+}
+
 // The MCP stdio SDK reads at most 10 MiB per frame. Stay under it with room
 // for JSON escaping and the protocol envelope.
 const MAX_TOOL_RESULT_WIRE_BYTES = 8 * 1024 * 1024;
@@ -549,9 +564,21 @@ interface ToolCallResult {
   readonly isError?: true;
 }
 
-async function safeResult(action: () => unknown): Promise<ToolCallResult> {
+interface ToolResultOptions<T> {
+  readonly present?: (value: T) => unknown;
+  readonly isError?: (value: T) => boolean;
+}
+
+async function safeResult<T>(
+  action: () => T | Promise<T>,
+  options: ToolResultOptions<T> = {},
+): Promise<ToolCallResult> {
   try {
-    return makeToolResult(await action(), false);
+    const value = await action();
+    return makeToolResult(
+      options.present?.(value) ?? value,
+      options.isError?.(value) ?? false,
+    );
   } catch (error) {
     const workerError = toWorkerError(error);
     return makeToolResult(

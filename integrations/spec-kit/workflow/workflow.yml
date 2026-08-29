@@ -58,6 +58,10 @@ inputs:
     type: string
     default: ""
     enum: ["", approve, reject]
+  wave_commit_verdict:
+    type: string
+    default: ""
+    enum: ["", approve, reject]
   wave_checkpoint_verdict:
     type: string
     default: ""
@@ -279,14 +283,33 @@ steps:
             active wave in execution.json, preserve one writer, and stop before
             committing"
 
+      - id: approve-wave-commit
+        type: gate
+        message:
+          "Inspect the active wave, its provider evidence, and changed paths. If
+          it wrote code, create or authorize exactly one clean non-merge commit
+          for that writer lease. The workflow will execute sealed required
+          project checks only after that exact commit exists. Reject aborts the
+          run so revised routing starts from fresh evidence."
+        show_file:
+          ".specify/workflows/runs/{{ context.run_id }}/evidence/execution.json"
+        options: [approve, reject]
+        verdict_input: wave_commit_verdict
+        on_reject: abort
+
+      - id: run-active-wave-checks
+        type: shell
+        run: >-
+          node "$SPECKIT_WORKFLOW_DIR/scripts/execution.mjs" run-checks "{{
+          context.run_id }}"
+        timeout: 1800
+
       - id: approve-wave-checkpoint
         type: gate
         message:
-          "Inspect the active wave, its provider evidence, changed paths, and
-          checks. If it wrote code, create or authorize exactly one clean
-          non-merge commit for that writer lease. Every check receipt must name
-          the exact tested tree matching that commit. Reject aborts the run so
-          revised routing starts from fresh evidence."
+          "Approve only after inspecting the workflow-executed check receipts,
+          sealed profile bindings, exact tested Git tree, and captured output
+          digests. Caller-authored success receipts cannot satisfy this gate."
         show_file:
           ".specify/workflows/runs/{{ context.run_id }}/evidence/execution.json"
         options: [approve, reject]

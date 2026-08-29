@@ -14,6 +14,7 @@ export type RuntimeFailureKind =
   | "protocol"
   | "timeout"
   | "failed-turn"
+  | "command-failure"
   | "nonzero-exit"
   | "stdin"
   | "generic";
@@ -42,6 +43,10 @@ const RUNTIME_FAILURES: Readonly<Record<RuntimeFailureKind, WorkerFailure>> = {
   "failed-turn": {
     code: ERROR_CODES.RUNTIME_FAILED,
     message: "Codex reported a failed turn",
+  },
+  "command-failure": {
+    code: ERROR_CODES.RUNTIME_FAILED,
+    message: "Codex command execution failed",
   },
   "nonzero-exit": {
     code: ERROR_CODES.RUNTIME_FAILED,

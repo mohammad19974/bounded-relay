@@ -21,6 +21,7 @@ import { buildCodexInvocation } from "./codex-command.js";
 import { JsonlDecoder } from "./jsonl-decoder.js";
 
 type StopReason = "user" | "shutdown" | "timeout" | "output-limit" | "protocol";
+type CommandExecutionOutcome = "succeeded" | "failed";
 
 const PUBLIC_EVENT_TYPES = new Set([
   "thread.started",
@@ -75,6 +76,8 @@ export class CodexRuntime implements WorkerRuntime {
     let usage: UsageSummary | undefined;
     let terminalEventSeen = false;
     let observedFailure: WorkerFailure | undefined;
+    let successfulCommandCount = 0;
+    let failedCommandCount = 0;
     const stdoutDecoder = new StringDecoder("utf8");
 
     let resolveCompletion: (value: RuntimeResult) => void = () => undefined;
@@ -128,6 +131,11 @@ export class CodexRuntime implements WorkerRuntime {
       }
       if (parsed.failure !== undefined) {
         observedFailure = parsed.failure;
+      }
+      if (parsed.commandOutcome === "succeeded") {
+        successfulCommandCount += 1;
+      } else if (parsed.commandOutcome === "failed") {
+        failedCommandCount += 1;
       }
       onEvent(parsed.event);
     });
@@ -208,6 +216,14 @@ export class CodexRuntime implements WorkerRuntime {
           failure: publicRuntimeFailure("timeout"),
         });
         return;
+      }
+      if (
+        observedFailure === undefined &&
+        ((failedCommandCount > 0 && successfulCommandCount === 0) ||
+          (request.sddReview?.seal.mode === "strict" &&
+            successfulCommandCount === 0))
+      ) {
+        observedFailure = publicRuntimeFailure("command-failure");
       }
       if (observedFailure !== undefined) {
         finish({
@@ -394,6 +410,7 @@ function parseCodexEvent(value: unknown): {
   readonly event: RuntimeEvent;
   readonly terminal: boolean;
   readonly failure?: WorkerFailure;
+  readonly commandOutcome?: CommandExecutionOutcome;
 } {
   if (!isRecord(value) || typeof value.type !== "string") {
     throw new WorkerError(
@@ -405,6 +422,7 @@ function parseCodexEvent(value: unknown): {
   const rawType = value.type;
   const type = normalizeEventType(rawType);
   const item = isRecord(value.item) ? value.item : undefined;
+  const commandOutcome = commandExecutionOutcome(rawType, item);
   const activity = classifyActivity(rawType, item);
   const sessionId =
     rawType === "thread.started"
@@ -435,7 +453,11 @@ function parseCodexEvent(value: unknown): {
     };
   }
 
-  return { event, terminal: rawType === "turn.completed" };
+  return {
+    event,
+    terminal: rawType === "turn.completed",
+    ...(commandOutcome === undefined ? {} : { commandOutcome }),
+  };
 }
 
 function classifyActivity(
@@ -484,6 +506,32 @@ function classifyActivity(
     return "researching";
   }
   return "working";
+}
+
+function commandExecutionOutcome(
+  type: string,
+  item: Record<string, unknown> | undefined,
+): CommandExecutionOutcome | undefined {
+  if (type !== "item.completed" || item?.type !== "command_execution") {
+    return undefined;
+  }
+
+  const status = item.status;
+  const exitCode = item.exit_code;
+  if (
+    status === "failed" ||
+    status === "declined" ||
+    (typeof exitCode === "number" && exitCode !== 0)
+  ) {
+    return "failed";
+  }
+  if (
+    (status === "completed" && (exitCode === undefined || exitCode === 0)) ||
+    (status === undefined && exitCode === 0)
+  ) {
+    return "succeeded";
+  }
+  return undefined;
 }
 
 function normalizeEventType(type: string): string {

@@ -165,10 +165,12 @@ Profile normalization and routing are pure: they do not read a repository, start
 a provider, or execute a declared check. Capability minimums can remove a lane
 only after hard task eligibility is applied. Write policy can only narrow task
 scopes. Check definitions contribute canonical `argv`/`cwd` digests for later
-receipt matching, while the caller-owned coordinator retains command execution
-authority. Codex model policy resolves by risk, then kind, then default and
-remains subject to the server allowlist; no profile field selects a Claude host
-model.
+receipt matching. Profile parsing and routing never execute them. After routing
+approval and a committed writer checkpoint, the optional Spec Kit workflow owns
+an explicit required-check step that executes the sealed vectors without a
+shell and derives receipts from captured process results. Codex model policy
+resolves by risk, then kind, then default and remains subject to the server
+allowlist; no profile field selects a Claude host model.
 
 The normalized profile fingerprint and profiled plan fingerprint are content
 addresses, not signatures or identity attestations. See
@@ -185,8 +187,9 @@ flowchart LR
     M[Committed tasks.md manifest<br/>all pending T### IDs] --> R[Verified routing.json<br/>exact pending-ID coverage]
     R --> E[Prepare execution.json<br/>at exact clean routing revision]
     E --> W[Run active dependency wave<br/>read-only tasks, then one writer]
-    W --> C[Coordinator checks and integration<br/>one direct-child non-merge commit]
-    C --> V[Verify model policy, tested tree,<br/>patch tree, diff, and dependency history]
+    W --> C[Coordinator integration<br/>one direct-child non-merge commit]
+    C --> X[Workflow runs sealed required checks<br/>bounded argv, no shell]
+    X --> V[Verify model policy, tested tree,<br/>check provenance, patch tree, diff, and history]
     V -->|next wave uses completed revision| W
     V -->|all waves complete| I[Implementation review<br/>routing base .. final HEAD]
     I --> G[Fail-closed convergence audit<br/>no direct implementation]
@@ -224,9 +227,13 @@ correctness.
 
 Every Codex execution result records `model` and `reasoningEffort`, including
 `null` for routed defaults, and must exact-match its routed model policy. Writer
-checks are stored as redacted coordinator-attested digest receipts with zero
-exit codes and `testedTree`; each must match the checkpoint tree. They are not
-signed CI attestations and do not independently prove command execution.
+checks are stored as redacted digest receipts with zero exit codes and
+`testedTree`; each must match the checkpoint tree. Sealed required profile
+checks are run by the workflow executor with an argument array, `shell: false`,
+a repository-bounded working directory, a fixed timeout, and bounded captured
+output. Their receipts are runner-derived and caller-prefilled success cannot
+satisfy the required binding. Optional host receipts remain local attestations;
+neither receipt form is a signed CI or identity attestation.
 
 Implementation review is bound to complete revalidated execution and compares
 the routing base revision with final `HEAD`. The changed-path scope is bounded
@@ -289,6 +296,14 @@ fixed safe activity vocabulary, counts real events, captures the last agent
 message, records reported token usage, limits combined stdout/stderr bytes, and
 terminates the child process tree on cancellation or timeout.
 
+The outer `codex exec` status and final prose are not sufficient success
+evidence. Completed `command_execution` items are classified from their
+`status` and numeric `exit_code`. If every attempted command failed, the runtime
+fails the job even when the outer process exits zero and the final message
+claims success. A strict SDD review additionally requires at least one
+successful inspection command; a generic analysis may recover from an
+exploratory failure by completing a later command successfully.
+
 On Windows, executable resolution prefers native `.com`/`.exe` commands. The
 standard npm-installed `codex.cmd` is mapped to its adjacent
 `@openai/codex/bin/codex.js` and launched with the current Node executable and
@@ -312,8 +327,8 @@ Only allowlisted event identifiers may appear as `lastEventType`; every
 unrecognized identifier becomes `unknown` and maps to the generic `working`
 activity. Unsafe session identifiers are omitted. Raw event payloads, command
 text, and tool arguments are not copied into public status. Malformed JSONL,
-missing terminal events, or a successful exit without a final message fail the
-job.
+missing terminal events, an all-failed command set, or a successful exit without
+a final message fail the job.
 
 ### Live status contract
 

@@ -163,7 +163,7 @@
       ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
-        "source": { "const": "host-executed" },
+        "source": { "enum": ["host-executed", "workflow-executed"] },
         "profile": { "$ref": "#/$defs/id" },
         "commandLabel": { "type": "string", "minLength": 1, "maxLength": 512 },
         "commandSha256": { "$ref": "#/$defs/sha256" },

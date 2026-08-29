@@ -142,6 +142,51 @@ process.stdin.on("end", () => {
       process.stderr.write("private\nerror\tmessage\n");
       process.exitCode = 7;
       break;
+    case "failed-command-outer-zero":
+      emit({ type: "thread.started", thread_id: "thread-failed-command" });
+      emit({ type: "turn.started" });
+      emit({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          exit_code: 6,
+          status: "failed",
+        },
+      });
+      emit({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: "All checks passed even though none ran successfully.",
+        },
+      });
+      emit({ type: "turn.completed", usage: {} });
+      break;
+    case "failed-then-successful-command":
+      emit({ type: "thread.started", thread_id: "thread-recovered-command" });
+      emit({ type: "turn.started" });
+      emit({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          exit_code: 1,
+          status: "failed",
+        },
+      });
+      emit({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          exit_code: 0,
+          status: "completed",
+        },
+      });
+      emit({
+        type: "item.completed",
+        item: { type: "agent_message", text: "Recovered after a failed probe." },
+      });
+      emit({ type: "turn.completed", usage: {} });
+      break;
     case "sdd-review-approved": {
       const decision = JSON.stringify({
         schemaVersion: 1,
@@ -150,6 +195,14 @@ process.stdin.on("end", () => {
         findings: [],
       });
       emit({ type: "thread.started", thread_id: "thread-sdd-review" });
+      emit({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          exit_code: 0,
+          status: "completed",
+        },
+      });
       emit({
         type: "item.completed",
         item: { type: "agent_message", text: decision },
@@ -174,7 +227,7 @@ process.stdin.on("end", () => {
       emit({ type: "item.started", item: { type: "command_execution" } });
       emit({ type: "item.updated", item: { type: "command_execution" } });
       process.stdout.write(
-        '{"type":"item.completed","item":{"type":"command_execution"}}\n',
+        '{"type":"item.completed","item":{"type":"command_execution","exit_code":0,"status":"completed"}}\n',
       );
       emit({ type: "item.started", item: { type: "agent_message" } });
       process.stdout.write(

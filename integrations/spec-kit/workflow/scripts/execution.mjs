@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { unlinkSync } from "node:fs";
 import { resolve } from "node:path";
@@ -13,6 +14,7 @@ import {
   assertIsoDate,
   assertJobId,
   assertModel,
+  assertNoSymlinkSegments,
   assertRegularFile,
   assertSafeIdentifier,
   assertSha256,
@@ -23,11 +25,13 @@ import {
   failChild,
   fileDigest,
   printSuccess,
+  readCommittedRepositoryFile,
   readJson,
   repositoryTree,
   repositoryRevisionComparison,
   requireSchema,
   safeRepositoryPath,
+  MAX_PROJECT_PROFILE_BYTES,
   workflowContext,
   writeJsonAtomic,
 } from "./evidence-core.mjs";
@@ -62,6 +66,17 @@ const CHECKPOINT_KEYS = new Set([
   "diffSha256",
   "resultsSha256",
   "checksSha256",
+  "checkExecution",
+  "verifiedAt",
+]);
+const CHECK_EXECUTION_KEYS = new Set([
+  "writerTaskId",
+  "completedRevision",
+  "testedTree",
+  "profileFingerprint",
+  "requiredChecksSha256",
+  "receiptsSha256",
+  "resultsSha256",
   "verifiedAt",
 ]);
 const DOCUMENT_KEYS = new Set([
@@ -89,6 +104,11 @@ const REASONING_EFFORTS = new Set([
   "ultra",
 ]);
 const MAX_WRITER_CHECK_RECEIPTS = 256;
+const CHECK_MAX_OUTPUT_BYTES = 1024 * 1024;
+const DEFAULT_CHECK_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_CHECK_TIMEOUT_MS = 15 * 60 * 1000;
+const MAX_WAVE_CHECK_TIME_MS = 25 * 60 * 1000;
+const CHECK_TIMEOUT_ENV = "CCW_WORKFLOW_CHECK_TIMEOUT_MS";
 const ROUTING_SCRIPT = fileURLToPath(new URL("./routing.mjs", import.meta.url));
 
 function assertStaticRouting(runId) {
@@ -210,39 +230,205 @@ function pathInLease(path, leases) {
   return leases.some((scope) => path === scope || path.startsWith(`${scope}/`));
 }
 
+function receiptId(wave, index) {
+  return `workflow-wave-${wave}-check-${String(index + 1).padStart(2, "0")}`;
+}
+
+function receiptLabel(profileId) {
+  return `sealed project check ${profileId}`;
+}
+
+function checkTimeoutMs() {
+  const raw = process.env[CHECK_TIMEOUT_ENV];
+  if (raw === undefined) {
+    return DEFAULT_CHECK_TIMEOUT_MS;
+  }
+  if (!/^[0-9]+$/u.test(raw)) {
+    fail(`${CHECK_TIMEOUT_ENV} must be a bounded integer`);
+  }
+  const value = Number(raw);
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 50 ||
+    value > MAX_CHECK_TIMEOUT_MS
+  ) {
+    fail(`${CHECK_TIMEOUT_ENV} must be between 50 and ${MAX_CHECK_TIMEOUT_MS}`);
+  }
+  return value;
+}
+
+function checkEnvironment() {
+  const allowed = [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "SystemRoot",
+    "COMSPEC",
+    "PATHEXT",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "CI",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "NPM_CONFIG_CACHE",
+    "npm_config_cache",
+    "PNPM_HOME",
+  ];
+  const environment = {};
+  let totalCharacters = 0;
+  for (const name of allowed) {
+    const value = process.env[name];
+    if (value === undefined) {
+      continue;
+    }
+    if (value.length > 16_384) {
+      fail(`workflow check environment ${name} is too large`);
+    }
+    totalCharacters += name.length + value.length;
+    if (totalCharacters > 64 * 1024) {
+      fail("workflow check environment exceeds its bounded size");
+    }
+    environment[name] = value;
+  }
+  return environment;
+}
+
+function sealedCheckProfiles(context, routing) {
+  const binding = routing.projectProfile ?? null;
+  if (binding === null) {
+    return null;
+  }
+  if (
+    typeof binding !== "object" ||
+    Array.isArray(binding) ||
+    !Array.isArray(binding.checkProfiles)
+  ) {
+    fail("execution project profile binding is malformed");
+  }
+  assertSha256(binding.sourceSha256, "project profile source digest");
+  assertSha256(binding.profileFingerprint, "project profile fingerprint");
+  const bytes = readCommittedRepositoryFile(
+    context,
+    routing.revision?.head,
+    binding.path,
+    "sealed project profile",
+    MAX_PROJECT_PROFILE_BYTES,
+  );
+  if (
+    createHash("sha256").update(bytes).digest("hex") !== binding.sourceSha256
+  ) {
+    fail("sealed project profile bytes no longer match routing evidence");
+  }
+  let source;
+  try {
+    source = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    fail("sealed project profile is not valid JSON");
+  }
+  if (!Array.isArray(source?.checkProfiles)) {
+    fail("sealed project profile has no check definitions");
+  }
+  const bindings = new Map(
+    binding.checkProfiles.map((check) => [check.id, check]),
+  );
+  const definitions = new Map();
+  for (const [index, check] of source.checkProfiles.entries()) {
+    if (
+      typeof check !== "object" ||
+      check === null ||
+      Array.isArray(check) ||
+      Object.keys(check).some((key) => !new Set(["id", "cwd", "argv"]).has(key))
+    ) {
+      fail(`sealed project check profile ${index} is malformed`);
+    }
+    assertSafeIdentifier(check.id, `sealed project check profile ${index}.id`);
+    const cwd =
+      check.cwd === "."
+        ? "."
+        : safeRepositoryPath(
+            check.cwd,
+            `sealed project check profile ${check.id}.cwd`,
+          );
+    if (
+      !Array.isArray(check.argv) ||
+      check.argv.length === 0 ||
+      check.argv.length > 32 ||
+      check.argv.some(
+        (argument) =>
+          typeof argument !== "string" ||
+          argument.length === 0 ||
+          argument.length > 4096 ||
+          // eslint-disable-next-line no-control-regex -- command arguments must remain reviewable data.
+          /[\u0000-\u001f\u007f]/u.test(argument),
+      )
+    ) {
+      fail(`sealed project check profile ${check.id}.argv is malformed`);
+    }
+    const definition = {
+      id: check.id,
+      cwd,
+      argv: [...check.argv],
+      commandSha256: canonicalDigest({ argv: check.argv, cwd }),
+    };
+    const projected = bindings.get(check.id);
+    if (
+      definitions.has(check.id) ||
+      projected === undefined ||
+      canonicalDigest({
+        id: definition.id,
+        cwd: definition.cwd,
+        commandSha256: definition.commandSha256,
+      }) !== canonicalDigest(projected)
+    ) {
+      fail(`sealed project check profile ${check.id} differs from routing`);
+    }
+    definitions.set(check.id, definition);
+  }
+  if (definitions.size !== bindings.size) {
+    fail("sealed project check profile set differs from routing");
+  }
+  return { binding, definitions };
+}
+
 function assertProfileCheckCoverage(receipts, assignment, projectProfile) {
-  if (projectProfile === null) {
-    return;
+  if (
+    projectProfile === null ||
+    !Array.isArray(assignment.requiredCheckProfiles) ||
+    assignment.requiredCheckProfiles.length === 0
+  ) {
+    fail(
+      `writer task ${assignment.taskId} requires at least one sealed project check`,
+    );
   }
   const definitions = new Map(
     projectProfile.checkProfiles.map((profile) => [profile.id, profile]),
   );
-  for (const receipt of receipts) {
-    const definition = definitions.get(receipt.profile);
-    if (
-      definition === undefined ||
-      receipt.cwd !== definition.cwd ||
-      receipt.commandSha256 !== definition.commandSha256
-    ) {
-      fail(
-        `task ${assignment.taskId} has a receipt outside its sealed project check profiles`,
-      );
-    }
+  if (receipts.length !== assignment.requiredCheckProfiles.length) {
+    fail(`task ${assignment.taskId} must contain exactly its required checks`);
   }
-  for (const required of assignment.requiredCheckProfiles) {
+  for (const [index, required] of assignment.requiredCheckProfiles.entries()) {
+    const receipt = receipts[index];
     const definition = definitions.get(required.id);
     if (
+      receipt === undefined ||
       definition === undefined ||
       canonicalDigest(definition) !== canonicalDigest(required) ||
-      !receipts.some(
-        (receipt) =>
-          receipt.profile === required.id &&
-          receipt.cwd === required.cwd &&
-          receipt.commandSha256 === required.commandSha256,
-      )
+      receipt.id !== receiptId(assignment.wave, index) ||
+      receipt.source !== "workflow-executed" ||
+      receipt.profile !== required.id ||
+      receipt.commandLabel !== receiptLabel(required.id) ||
+      receipt.cwd !== required.cwd ||
+      receipt.commandSha256 !== required.commandSha256
     ) {
       fail(
-        `task ${assignment.taskId} is missing required project check ${required.id}`,
+        `task ${assignment.taskId} lacks runner-owned evidence for required project check ${required.id}`,
       );
     }
   }
@@ -254,6 +440,7 @@ function validateResult(
   baselineRevision,
   context,
   projectProfile,
+  checkMode = "verified",
 ) {
   if (
     typeof result !== "object" ||
@@ -341,8 +528,16 @@ function validateResult(
   if (changedFiles.some((path) => !pathInLease(path, assignment.writePaths))) {
     fail(`task ${assignment.taskId} changed a path outside its lease`);
   }
-  assertCheckReceipts(result.checks, `task ${assignment.taskId}.checks`, true);
-  assertProfileCheckCoverage(result.checks, assignment, projectProfile);
+  if (checkMode === "verified") {
+    assertCheckReceipts(
+      result.checks,
+      `task ${assignment.taskId}.checks`,
+      true,
+    );
+    assertProfileCheckCoverage(result.checks, assignment, projectProfile);
+  } else if (checkMode !== "runner-input") {
+    fail(`task ${assignment.taskId} uses an unknown check validation mode`);
+  }
   if (assignment.provider === "codex") {
     if (result.effect !== "proposal-integrated") {
       fail(`Codex writer ${assignment.taskId} requires an integrated proposal`);
@@ -394,6 +589,7 @@ function validateWaveResults(
   wave,
   baselineRevision,
   context,
+  checkMode = "verified",
 ) {
   const assignments = tasksForWave(routing, wave);
   const expectedIds = assignments.map((assignment) => assignment.taskId);
@@ -415,6 +611,7 @@ function validateWaveResults(
       baselineRevision,
       context,
       routing.projectProfile ?? null,
+      checkMode,
     );
   }
   return { assignments, results };
@@ -508,6 +705,180 @@ function assertCheckTrees(receipts, expectedTree, label) {
   if (receipts.some((receipt) => receipt.testedTree !== expectedTree)) {
     fail(`${label} contains a check receipt for a different Git tree`);
   }
+}
+
+function checkWorkingDirectory(context, definition) {
+  const path =
+    definition.cwd === "."
+      ? context.projectRoot
+      : resolve(context.projectRoot, ...definition.cwd.split("/"));
+  assertInside(context.projectRoot, path, `check ${definition.id} cwd`, true);
+  assertNoSymlinkSegments(
+    context.projectRoot,
+    definition.cwd,
+    `check ${definition.id} cwd`,
+  );
+  assertDirectory(path, `check ${definition.id} cwd`);
+  return path;
+}
+
+function checkedOutput(value) {
+  return Buffer.isBuffer(value) ? value : Buffer.alloc(0);
+}
+
+function runRequiredChecks(
+  context,
+  routing,
+  assignment,
+  completedRevision,
+  testedTree,
+) {
+  const sealed = sealedCheckProfiles(context, routing);
+  if (
+    sealed === null ||
+    !Array.isArray(assignment.requiredCheckProfiles) ||
+    assignment.requiredCheckProfiles.length === 0
+  ) {
+    fail(
+      `writer task ${assignment.taskId} requires at least one sealed project check`,
+    );
+  }
+  const definitions = assignment.requiredCheckProfiles.map((required) => {
+    const definition = sealed.definitions.get(required.id);
+    if (
+      definition === undefined ||
+      canonicalDigest({
+        id: definition.id,
+        cwd: definition.cwd,
+        commandSha256: definition.commandSha256,
+      }) !== canonicalDigest(required)
+    ) {
+      fail(
+        `writer task ${assignment.taskId} references an unsealed project check`,
+      );
+    }
+    return definition;
+  });
+  const perCheckTimeoutMs = checkTimeoutMs();
+  const deadline = Date.now() + MAX_WAVE_CHECK_TIME_MS;
+  const environment = checkEnvironment();
+  const receipts = [];
+  for (const [index, definition] of definitions.entries()) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < 50) {
+      fail(
+        `required project check ${definition.id} exceeded the wave time limit`,
+      );
+    }
+    const startedAt = new Date().toISOString();
+    const result = spawnSync(definition.argv[0], definition.argv.slice(1), {
+      cwd: checkWorkingDirectory(context, definition),
+      env: environment,
+      encoding: null,
+      maxBuffer: CHECK_MAX_OUTPUT_BYTES,
+      timeout: Math.min(perCheckTimeoutMs, remainingMs),
+      shell: false,
+      windowsHide: true,
+    });
+    const completedAt = new Date().toISOString();
+    if (result.error) {
+      const timedOut = result.error.code === "ETIMEDOUT";
+      fail(
+        timedOut
+          ? `required project check ${definition.id} timed out`
+          : `required project check ${definition.id} could not execute`,
+      );
+    }
+    if (result.status !== 0) {
+      fail(
+        `required project check ${definition.id} exited with status ${String(result.status)}`,
+      );
+    }
+    assertCleanWorkflowWorktree(context);
+    if (
+      currentGitRevision(context) !== completedRevision ||
+      repositoryTree(context, completedRevision) !== testedTree
+    ) {
+      fail(
+        `required project check ${definition.id} changed the tested revision`,
+      );
+    }
+    receipts.push({
+      id: receiptId(assignment.wave, index),
+      source: "workflow-executed",
+      profile: definition.id,
+      commandLabel: receiptLabel(definition.id),
+      commandSha256: definition.commandSha256,
+      cwd: definition.cwd,
+      exitCode: 0,
+      stdoutSha256: createHash("sha256")
+        .update(checkedOutput(result.stdout))
+        .digest("hex"),
+      stderrSha256: createHash("sha256")
+        .update(checkedOutput(result.stderr))
+        .digest("hex"),
+      testedTree,
+      startedAt,
+      completedAt,
+    });
+  }
+  return {
+    profileFingerprint: sealed.binding.profileFingerprint,
+    receipts,
+  };
+}
+
+function createCheckExecution(
+  writer,
+  completedRevision,
+  testedTree,
+  profileFingerprint,
+  results,
+  receipts,
+) {
+  return {
+    writerTaskId: writer?.taskId ?? null,
+    completedRevision,
+    testedTree,
+    profileFingerprint,
+    requiredChecksSha256: canonicalDigest(writer?.requiredCheckProfiles ?? []),
+    receiptsSha256: canonicalDigest(receipts),
+    resultsSha256: canonicalDigest(results),
+    verifiedAt: new Date().toISOString(),
+  };
+}
+
+function assertCheckExecution(
+  checkExecution,
+  writer,
+  completedRevision,
+  testedTree,
+  routing,
+  results,
+  receipts,
+  label,
+) {
+  if (
+    typeof checkExecution !== "object" ||
+    checkExecution === null ||
+    Array.isArray(checkExecution) ||
+    Object.keys(checkExecution).some((key) => !CHECK_EXECUTION_KEYS.has(key)) ||
+    checkExecution.writerTaskId !== (writer?.taskId ?? null) ||
+    checkExecution.completedRevision !== completedRevision ||
+    checkExecution.testedTree !== testedTree ||
+    checkExecution.profileFingerprint !==
+      (writer === null ? null : routing.projectProfile?.profileFingerprint) ||
+    checkExecution.requiredChecksSha256 !==
+      canonicalDigest(writer?.requiredCheckProfiles ?? []) ||
+    checkExecution.receiptsSha256 !== canonicalDigest(receipts) ||
+    checkExecution.resultsSha256 !== canonicalDigest(results)
+  ) {
+    fail(`${label} lacks matching workflow-executed check evidence`);
+  }
+  assertIsoDate(
+    checkExecution.verifiedAt,
+    `${label}.checkExecution.verifiedAt`,
+  );
 }
 
 function assertPatchProducesTree(
@@ -631,6 +1002,17 @@ function validateCheckpoint(
       );
     }
   }
+  const completedTree = repositoryTree(context, checkpoint.completedRevision);
+  assertCheckExecution(
+    checkpoint.checkExecution,
+    writer,
+    checkpoint.completedRevision,
+    completedTree,
+    routing,
+    results,
+    writerResult?.checks ?? [],
+    `wave ${wave.wave} checkpoint`,
+  );
   if (
     checkpoint.resultsSha256 !== canonicalDigest(results) ||
     checkpoint.checksSha256 !== canonicalDigest(writerResult?.checks ?? [])
@@ -730,6 +1112,7 @@ function prepare(runId, context, routing, routingPath, waves, path) {
       wave: firstWave.wave,
       baselineRevision: head,
       startedAt: new Date().toISOString(),
+      checkExecution: null,
     },
     completedWaves: [],
     results: [],
@@ -743,6 +1126,145 @@ function prepare(runId, context, routing, routingPath, waves, path) {
     wave: firstWave.wave,
     taskIds: firstWave.taskIds,
     complete: false,
+  });
+}
+
+function runChecks(runId, context, routing, waves, document, path) {
+  if (document.state !== "active") {
+    fail("execution has no active wave whose checks can run");
+  }
+  const expectedBase = validateHistory(document, routing, waves, context);
+  const index = document.completedWaves.length;
+  const wave = waves[index];
+  if (
+    wave === undefined ||
+    document.activeWave?.wave !== wave.wave ||
+    document.activeWave?.baselineRevision !== expectedBase
+  ) {
+    fail("active execution wave does not follow the verified history");
+  }
+  assertIsoDate(document.activeWave.startedAt, "active wave startedAt");
+  assertExactResultSet(document, routing, wave.wave);
+  const { assignments, results } = validateWaveResults(
+    document,
+    routing,
+    wave,
+    expectedBase,
+    context,
+    "runner-input",
+  );
+  validateDependencyOrder(document, routing);
+  assertCleanWorkflowWorktree(context);
+  const completedRevision = currentGitRevision(context);
+  const comparison = repositoryRevisionComparison(
+    context,
+    expectedBase,
+    completedRevision,
+  );
+  const writer = writerForWave(assignments);
+  const writerResult =
+    writer === null
+      ? null
+      : results.find((result) => result.taskId === writer.taskId);
+  if (
+    writer === null
+      ? completedRevision !== expectedBase ||
+        comparison.changedPaths.length !== 0
+      : writerResult === undefined ||
+        completedRevision === expectedBase ||
+        canonicalDigest(comparison.changedPaths) !==
+          canonicalDigest([...writerResult.changedFiles].sort(compareCodeUnits))
+  ) {
+    fail(
+      `wave ${wave.wave} requires an exact clean committed outcome before checks run`,
+    );
+  }
+  if (
+    writer !== null &&
+    comparison.changedPaths.some(
+      (changed) => !pathInLease(changed, writer.writePaths),
+    )
+  ) {
+    fail(`wave ${wave.wave} committed a path outside the writer lease`);
+  }
+  if (writer !== null) {
+    assertSingleWriterCommit(context, expectedBase, completedRevision);
+    if (writer.provider === "codex") {
+      const patchPath = resolve(
+        context.runDirectory,
+        ...writerResult.patchFile.split("/"),
+      );
+      assertInside(context.runDirectory, patchPath, "proposal patch file");
+      assertPatchProducesTree(
+        context,
+        patchPath,
+        expectedBase,
+        completedRevision,
+      );
+    }
+  }
+  const testedTree = repositoryTree(context, completedRevision);
+  const executed =
+    writer === null
+      ? { profileFingerprint: null, receipts: [] }
+      : runRequiredChecks(
+          context,
+          routing,
+          writer,
+          completedRevision,
+          testedTree,
+        );
+  const nextResults = document.results.map((result) =>
+    writer !== null && result.taskId === writer.taskId
+      ? { ...result, checks: executed.receipts }
+      : result,
+  );
+  const nextDocument = { ...document, results: nextResults };
+  const verified = validateWaveResults(
+    nextDocument,
+    routing,
+    wave,
+    expectedBase,
+    context,
+  );
+  const verifiedWriterResult =
+    writer === null
+      ? null
+      : verified.results.find((result) => result.taskId === writer.taskId);
+  if (writer !== null) {
+    if (verifiedWriterResult === undefined) {
+      fail(`wave ${wave.wave} lost its writer result while checks ran`);
+    }
+    assertCheckTrees(
+      verifiedWriterResult.checks,
+      testedTree,
+      `wave ${wave.wave}`,
+    );
+  }
+  assertAggregateWriterReceiptLimit(nextDocument, routing, wave.wave);
+  const checkExecution = createCheckExecution(
+    writer,
+    completedRevision,
+    testedTree,
+    executed.profileFingerprint,
+    verified.results,
+    verifiedWriterResult?.checks ?? [],
+  );
+  writeJsonAtomic(path, {
+    ...nextDocument,
+    activeWave: {
+      ...document.activeWave,
+      checkExecution,
+    },
+  });
+  printSuccess({
+    runId,
+    state: "active",
+    wave: wave.wave,
+    writerTaskId: writer?.taskId ?? null,
+    completedRevision,
+    testedTree,
+    checks: executed.receipts.length,
   });
 }
 
@@ -814,6 +1336,17 @@ function verifyWave(runId, context, routing, waves, document, path) {
       );
     }
   }
+  const completedTree = repositoryTree(context, completedRevision);
+  assertCheckExecution(
+    document.activeWave.checkExecution,
+    writer,
+    completedRevision,
+    completedTree,
+    routing,
+    results,
+    writerResult?.checks ?? [],
+    `wave ${wave.wave}`,
+  );
   if (
     writer !== null &&
     comparison.changedPaths.some(
@@ -831,6 +1364,7 @@ function verifyWave(runId, context, routing, waves, document, path) {
     diffSha256: comparison.diffSha256,
     resultsSha256: canonicalDigest(results),
     checksSha256: canonicalDigest(writerResult?.checks ?? []),
+    checkExecution: document.activeWave.checkExecution,
     verifiedAt: new Date().toISOString(),
   };
   const completedWaves = [...document.completedWaves, wave.wave];
@@ -846,6 +1380,7 @@ function verifyWave(runId, context, routing, waves, document, path) {
           wave: nextWave.wave,
           baselineRevision: completedRevision,
           startedAt: new Date().toISOString(),
+          checkExecution: null,
         },
     completedWaves,
     checkpoints,
@@ -902,13 +1437,17 @@ function verifyHistory(runId, context, routing, waves, document) {
 try {
   const [action, runId] = process.argv.slice(2);
   if (
-    !new Set(["prepare", "verify-wave", "verify", "verify-history"]).has(
-      action,
-    ) ||
+    !new Set([
+      "prepare",
+      "run-checks",
+      "verify-wave",
+      "verify",
+      "verify-history",
+    ]).has(action) ||
     !runId
   ) {
     fail(
-      "usage: execution.mjs <prepare|verify-wave|verify|verify-history> <run-id>",
+      "usage: execution.mjs <prepare|run-checks|verify-wave|verify|verify-history> <run-id>",
     );
   }
   const context = workflowContext(runId);
@@ -928,7 +1467,9 @@ try {
     if (document.routingRevision !== routing.revision?.head) {
       fail("execution routing revision no longer matches routing evidence");
     }
-    if (action === "verify-wave") {
+    if (action === "run-checks") {
+      runChecks(runId, context, routing, waves, document, path);
+    } else if (action === "verify-wave") {
       verifyWave(runId, context, routing, waves, document, path);
     } else if (action === "verify") {
       verifyComplete(runId, context, routing, waves, document);

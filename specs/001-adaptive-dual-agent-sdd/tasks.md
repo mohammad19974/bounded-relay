@@ -78,3 +78,19 @@
       checks.
 - [x] T029 Run convergence, update tasks/context/handoff, and inspect
       `git diff --check`.
+
+## Phase 8: False-Success Hardening
+
+- [x] T030 Reproduce and fail closed when Codex exits zero after every nested
+      command execution failed, while preserving recovery after a later
+      successful exploratory command.
+- [x] T031 Require specialized SDD review to observe a successful inspection
+      command and classify failed, cancelled, blocked, or stale terminal MCP
+      results as errors without discarding their structured payloads.
+- [ ] T032 Replace caller-authored required check success with an explicit
+      shell-free workflow runner that derives receipts from sealed commands and
+      rejects nonzero, missing, timed-out, or forged evidence.
+- [ ] T033 Align schemas, workflow gates, security/architecture documentation,
+      changelog, context, and handoff with the fail-closed behavior.
+- [ ] T034 Run focused regressions, the complete `npm run check` release gate,
+      independent diff review, and `git diff --check`.

@@ -816,7 +816,7 @@ function canonicalJson(value) {
   fail(`canonical JSON does not support ${typeof value}`);
 }
 
-function assertNoSymlinkSegments(root, relativePath, label) {
+export function assertNoSymlinkSegments(root, relativePath, label) {
   let current = root;
   for (const segment of relativePath.split("/")) {
     current = resolve(current, segment);
