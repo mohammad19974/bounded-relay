@@ -53,7 +53,9 @@ actions.
   Codex-managed read-only internal subagents inside the same invocation,
   sandbox, authority, and path boundary. The parent invocation remains the only
   proposal writer; Claude calls, nested workers, and authority expansion remain
-  prohibited.
+  prohibited. `ultra` stays a per-job opt-in: `CCW_DEFAULT_REASONING_EFFORT`
+  rejects it at configuration load, and server-owned model/effort defaults are
+  never injected into resumed sessions (ADR 0004 amendment).
 
 ### Analyze mode
 
@@ -172,13 +174,21 @@ The worker then:
 3. removes the clone's origin;
 4. disables repository Git hooks and global/system Git configuration for worker
    Git commands;
-5. runs Codex with `workspace-write` only in the clone;
-6. confirms `HEAD` and refs did not change;
-7. rejects changes outside the allowlist or in protected paths;
-8. rejects changed symlinks and non-regular paths;
-9. enforces changed-file and patch-byte limits;
-10. creates a full-index binary Git patch and SHA-256 digest;
-11. deletes the clone and releases the lease.
+5. optionally runs the operator-declared `CCW_PROPOSAL_BOOTSTRAP` argv once in
+   the clone (ADR 0003 amendment): server-owned environment configuration, never
+   caller input, executed without a shell under the standard child environment
+   allowlist and a bounded timeout, failing preparation closed on any error and
+   never surfacing its output. The declared command executes the pinned
+   revision's package-manager configuration with worker authority, so the
+   documented recipe avoids network access and lifecycle scripts; the operator
+   accepts the residual risk of the command they declare;
+6. runs Codex with `workspace-write` only in the clone;
+7. confirms `HEAD` and refs did not change;
+8. rejects changes outside the allowlist or in protected paths;
+9. rejects changed symlinks and non-regular paths;
+10. enforces changed-file and patch-byte limits;
+11. creates a full-index binary Git patch and SHA-256 digest;
+12. deletes the clone and releases the lease.
 
 The patch is output, not an action. The worker never runs `git apply`, never
 copies files back, and never commits, pushes, deploys, or publishes.
