@@ -523,6 +523,253 @@ describe("JobManager lifecycle", () => {
     });
   });
 
+  test("applies server-owned default model and effort only when the caller omits them", async () => {
+    const { manager, repository } = await makeManager({
+      allowedModels: ["gpt-5.6-sol", "gpt-5.6-terra"],
+      defaultModel: "gpt-5.6-sol",
+      defaultReasoningEffort: "high",
+    });
+    await expect(
+      manager.submit({ task: "review", cwd: repository.root }),
+    ).resolves.toMatchObject({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    });
+    await expect(
+      manager.submit({
+        task: "review explicitly",
+        cwd: repository.root,
+        model: "gpt-5.6-terra",
+        reasoningEffort: "low",
+      }),
+    ).resolves.toMatchObject({
+      model: "gpt-5.6-terra",
+      reasoningEffort: "low",
+    });
+  });
+
+  test("retains a partial final message and diagnostics when the runtime fails", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const submitted = await manager.submit({
+      task: "long analysis",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "failed",
+      resultTruncated: true,
+      finalMessage: "Partial findings: the first two files are clean.",
+      failure: {
+        code: ERROR_CODES.TIMEOUT,
+        message: "Codex exceeded the configured timeout",
+        diagnostics: {
+          stopReason: "timeout",
+          eventCount: 5,
+          commandsSucceeded: 2,
+          commandsFailed: 0,
+          stdoutBytes: 2_048,
+          stderrBytes: 10,
+          elapsedMs: 1_000,
+          partialMessageChars: 47,
+        },
+      },
+    });
+    const failed = await waitForTerminal(manager, submitted.id);
+    expect(failed).toMatchObject({
+      status: "failed",
+      resultTruncated: true,
+      partialResultAvailable: true,
+      error: {
+        code: ERROR_CODES.TIMEOUT,
+        message: "Codex exceeded the configured timeout",
+        diagnostics: { stopReason: "timeout", eventCount: 5 },
+      },
+    });
+    expect(failed.resultAvailable).toBe(false);
+    expect(manager.result(submitted.id)).toMatchObject({
+      ready: true,
+      finalMessage: "Partial findings: the first two files are clean.",
+    });
+  });
+
+  test("drops adversarial diagnostics keys and invalid values from failures", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const submitted = await manager.submit({
+      task: "diagnose",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "failed",
+      resultTruncated: false,
+      failure: {
+        code: ERROR_CODES.TIMEOUT,
+        message: "Codex exceeded the configured timeout",
+        diagnostics: {
+          stopReason: "weird-reason",
+          eventCount: -5,
+          stdoutBytes: 3.5,
+          commandsFailed: 2,
+          evil: "leaked-secret-value",
+        } as never,
+      },
+    });
+    const failed = await waitForTerminal(manager, submitted.id);
+    expect(failed.error?.diagnostics).toEqual({ commandsFailed: 2 });
+    expect(JSON.stringify(failed)).not.toContain("leaked-secret-value");
+    expect(JSON.stringify(failed)).not.toContain("weird-reason");
+  });
+
+  test("marks a persisted session as resumable only once a session was observed", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const persisted = await manager.submit({
+      task: "warm analysis",
+      cwd: repository.root,
+      persistSession: true,
+    });
+    // Before Codex reports a thread, no recorded session exists to resume.
+    expect(persisted.sessionPersisted).toBeUndefined();
+    await waitForRuns(runtime, 1);
+    expect(
+      (await manager.status(persisted.id)).sessionPersisted,
+    ).toBeUndefined();
+    runtime.runs[0]?.resolve({
+      outcome: "completed",
+      finalMessage: "done",
+      sessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      resultTruncated: false,
+    });
+    const terminal = await waitForTerminal(manager, persisted.id);
+    expect(terminal).toMatchObject({
+      sessionPersisted: true,
+      sessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+    });
+
+    const ephemeral = await manager.submit({
+      task: "cold analysis",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 2);
+    runtime.runs[1]?.resolve({
+      outcome: "completed",
+      finalMessage: "done",
+      sessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      resultTruncated: false,
+    });
+    const ephemeralTerminal = await waitForTerminal(manager, ephemeral.id);
+    expect(ephemeralTerminal.sessionPersisted).toBeUndefined();
+  });
+
+  test("marks a resumed job's session as resumable once its thread is observed", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const resumed = await manager.submit({
+      task: "continue the thread",
+      cwd: repository.root,
+      resumeSessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "completed",
+      finalMessage: "done",
+      sessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      resultTruncated: false,
+    });
+    const terminal = await waitForTerminal(manager, resumed.id);
+    expect(terminal.sessionPersisted).toBe(true);
+  });
+
+  test("does not inject server default model or effort into a resumed session", async () => {
+    const { manager, repository } = await makeManager({
+      allowedModels: ["gpt-5.6-sol"],
+      defaultModel: "gpt-5.6-sol",
+      defaultReasoningEffort: "high",
+    });
+    const resumed = await manager.submit({
+      task: "continue exactly as before",
+      cwd: repository.root,
+      resumeSessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+    });
+    expect(resumed.model).toBeUndefined();
+    expect(resumed.reasoningEffort).toBeUndefined();
+
+    const explicit = await manager.submit({
+      task: "continue with an explicit model",
+      cwd: repository.root,
+      resumeSessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+    });
+    expect(explicit).toMatchObject({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+    });
+  });
+
+  test("ignores a whitespace-only partial final message on failure", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const submitted = await manager.submit({
+      task: "fail with blank salvage",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "failed",
+      resultTruncated: false,
+      finalMessage: "  \n",
+      failure: {
+        code: ERROR_CODES.TIMEOUT,
+        message: "Codex exceeded the configured timeout",
+      },
+    });
+    const failed = await waitForTerminal(manager, submitted.id);
+    expect(failed.partialResultAvailable).toBeUndefined();
+    expect(manager.result(submitted.id).finalMessage).toBeUndefined();
+  });
+
+  test("never salvages a partial final message for a failed SDD review", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const review = await manager.submitReview(strictReviewInput(repository));
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "failed",
+      resultTruncated: true,
+      finalMessage: '{"verdict":"approved","summary":"unvalidated"}',
+      sessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      failure: {
+        code: ERROR_CODES.TIMEOUT,
+        message: "Codex exceeded the configured timeout",
+      },
+    });
+    const failed = await waitForTerminal(manager, review.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.partialResultAvailable).toBeUndefined();
+    expect(failed.resultAvailable).toBe(false);
+    expect(manager.result(review.id).finalMessage).toBeUndefined();
+  });
+
+  test("drops an already-received partial message when the job is cancelled", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const submitted = await manager.submit({
+      task: "cancel mid-flight",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.onEvent({
+      type: "item.completed",
+      activity: "response_ready",
+      agentMessage: "half-finished thought",
+    });
+    runtime.runs[0]?.resolve({
+      outcome: "cancelled",
+      resultTruncated: false,
+      finalMessage: "half-finished thought",
+    });
+    const cancelled = await waitForTerminal(manager, submitted.id);
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.partialResultAvailable).toBeUndefined();
+    expect(manager.result(submitted.id).finalMessage).toBeUndefined();
+  });
+
   test("throws a typed error for unknown jobs", async () => {
     const { manager } = await makeManager();
     await expect(manager.status("missing")).rejects.toMatchObject({

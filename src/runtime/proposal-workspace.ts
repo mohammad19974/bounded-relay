@@ -1,15 +1,20 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, posix, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import type { WorkerConfig } from "../config/worker-config.js";
 import type { ProposalArtifact, ResolvedJobRequest } from "../core/types.js";
 import { ERROR_CODES, WorkerError } from "../core/errors.js";
+import { buildChildEnvironment } from "../security/environment-policy.js";
 import {
   isPathInside,
   isProtectedProposalPath,
 } from "../security/path-policy.js";
 import type { GitClient } from "./git-client.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface PreparedProposal {
   readonly request: ResolvedJobRequest;
@@ -101,9 +106,11 @@ export class ProposalWorkspace {
         );
       }
       const baselineRefs = await this.#refsDigest(stageRoot);
+      const dependenciesReady = await this.#runBootstrap(stageRoot);
       const stagedRequest: ResolvedJobRequest = {
         ...request,
         executionRoot: stageRoot,
+        ...(dependenciesReady ? { proposalDependenciesReady: true } : {}),
       };
       let cleaned = false;
 
@@ -128,6 +135,42 @@ export class ProposalWorkspace {
     } catch (error) {
       await rm(temporaryDirectory, { recursive: true, force: true });
       throw error;
+    }
+  }
+
+  /**
+   * Runs the operator-declared bootstrap (ADR 0003 addendum) once inside the
+   * fresh clone so Codex can execute the project's own checks there. The argv
+   * is server-owned environment configuration, never caller input, and runs
+   * without a shell. Any failure fails the whole preparation closed; child
+   * output is captured bounded and discarded, never surfaced.
+   */
+  async #runBootstrap(stageRoot: string): Promise<boolean> {
+    const bootstrap = this.#config.proposalBootstrap;
+    if (bootstrap === undefined) {
+      return false;
+    }
+    // Configuration validation guarantees at least one argument.
+    const executable = bootstrap[0];
+    if (executable === undefined) {
+      return false;
+    }
+    const bootstrapArguments = bootstrap.slice(1);
+    try {
+      await execFileAsync(executable, bootstrapArguments, {
+        cwd: stageRoot,
+        env: buildChildEnvironment(process.env, this.#config),
+        timeout: this.#config.proposalBootstrapTimeoutMs,
+        killSignal: "SIGKILL",
+        maxBuffer: 4_000_000,
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      throw new WorkerError(
+        ERROR_CODES.RUNTIME_FAILED,
+        "The proposal workspace bootstrap command failed or timed out",
+      );
     }
   }
 

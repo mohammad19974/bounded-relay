@@ -485,16 +485,18 @@ local loading, workflow evidence, strict-gate rules, recovery, and removal.
 
 Safe defaults require no project configuration.
 
-| Variable                 | Default                               | Meaning                                              |
-| ------------------------ | ------------------------------------- | ---------------------------------------------------- |
-| `CCW_ALLOWED_ROOTS`      | `CLAUDE_PROJECT_DIR`, then server cwd | Platform-delimited directories the worker may enter. |
-| `CCW_ENABLE_PROPOSALS`   | `false`                               | Register the isolated proposal tool.                 |
-| `CCW_MAX_CONCURRENT`     | `2`                                   | Active Codex jobs in this server process.            |
-| `CCW_MAX_QUEUED`         | `32`                                  | Maximum queued jobs.                                 |
-| `CCW_DEFAULT_TIMEOUT_MS` | `1200000`                             | Default job timeout.                                 |
-| `CCW_MAX_TIMEOUT_MS`     | `1800000`                             | Maximum caller-selected timeout.                     |
-| `CCW_FORWARD_AUTH_ENV`   | `false`                               | Forward known API-token variables to Codex.          |
-| `CCW_FORWARD_ENV`        | empty                                 | Extra environment variable names to forward.         |
+| Variable                       | Default                               | Meaning                                              |
+| ------------------------------ | ------------------------------------- | ---------------------------------------------------- |
+| `CCW_ALLOWED_ROOTS`            | `CLAUDE_PROJECT_DIR`, then server cwd | Platform-delimited directories the worker may enter. |
+| `CCW_DEFAULT_MODEL`            | empty                                 | Allowlisted model for jobs that omit `model`.        |
+| `CCW_DEFAULT_REASONING_EFFORT` | empty                                 | Reasoning effort for jobs that omit it.              |
+| `CCW_ENABLE_PROPOSALS`         | `false`                               | Register the isolated proposal tool.                 |
+| `CCW_MAX_CONCURRENT`           | `2`                                   | Active Codex jobs in this server process.            |
+| `CCW_MAX_QUEUED`               | `32`                                  | Maximum queued jobs.                                 |
+| `CCW_DEFAULT_TIMEOUT_MS`       | `1200000`                             | Default job timeout.                                 |
+| `CCW_MAX_TIMEOUT_MS`           | `1800000`                             | Maximum caller-selected timeout.                     |
+| `CCW_FORWARD_AUTH_ENV`         | `false`                               | Forward known API-token variables to Codex.          |
+| `CCW_FORWARD_ENV`              | empty                                 | Extra environment variable names to forward.         |
 
 Read [Configuration](docs/configuration.md) before forwarding secrets or
 enabling proposals.

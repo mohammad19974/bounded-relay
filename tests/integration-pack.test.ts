@@ -589,6 +589,137 @@ async function prepareOptionalReceiptAggregateExecution(
   };
 }
 
+async function completeProfiledWriterPairRouting(item: Fixture): Promise<{
+  readonly executionPath: string;
+  readonly routePath: string;
+  readonly document: Record<string, unknown>;
+  readonly revisionHead: string;
+  readonly waveCount: number;
+  readonly requiredCheckBinding: {
+    readonly id: string;
+    readonly cwd: string;
+    readonly commandSha256: string;
+  };
+}> {
+  // configureProjectProfile already seals `fixture-check` as the single
+  // required write check, which both writer lanes share.
+  const configured = await configureProjectProfile(item, "claude-host", 1);
+  const profile = configured.profile;
+
+  await completeApprovedPlanReview(item);
+  await commitTasks(item, [{ id: "T001" }, { id: "T002" }]);
+  expect(script(item, "routing.mjs", ["prepare", runId]).status).toBe(0);
+  const routePath = join(item.evidence, "routing.json");
+  const document = await json(routePath);
+  const revision = document.revision as Record<string, unknown>;
+  const result = routeProfiledSddTasks({
+    neutralCodexShareBps: 5000,
+    projectProfile: profile,
+    tasks: [
+      {
+        id: "T001",
+        effortPoints: 3,
+        risk: "medium",
+        authority: "write",
+        kind: "planning",
+        dependencies: [],
+        writeScopes: ["src/claude"],
+        eligibleLanes: ["claude-host"],
+      },
+      {
+        id: "T002",
+        effortPoints: 3,
+        risk: "medium",
+        authority: "write",
+        kind: "planning",
+        dependencies: [],
+        writeScopes: ["src/codex"],
+        eligibleLanes: ["codex"],
+      },
+    ],
+  });
+  document.state = "complete";
+  document.router = {
+    tool: "codex_worker_sdd_route",
+    request: {
+      tasks: result.tasks,
+      neutralCodexShareBps: 5000,
+      projectProfile: profile,
+    },
+    result,
+  };
+  document.crossReviewPolicy = result.crossReviewPolicy;
+  document.assignments = result.tasks.map((task) => {
+    const routed = required(
+      result.assignments.find((entry) => entry.taskId === task.id),
+      `writer pair assignment ${task.id}`,
+    );
+    const codexModelPolicy = {
+      source: "server-allowlisted",
+      model: routed.codexPolicy.model,
+      reasoningEffort: routed.codexPolicy.reasoningEffort,
+    };
+    return {
+      taskId: task.id,
+      provider: routed.lane,
+      reviewerProvider: routed.lane === "codex" ? "claude-host" : "codex",
+      risk: task.risk,
+      authority: task.authority,
+      kind: task.kind,
+      wave: routed.wave,
+      effort: task.effortPoints,
+      writePaths: task.writeScopes,
+      dependencies: task.dependencies,
+      rationale: "The sealed profile routes one writer per lane.",
+      revisionSeal: revision.seal,
+      modelPolicy:
+        routed.lane === "codex"
+          ? codexModelPolicy
+          : { source: "host-selected", model: null },
+      ...(routed.lane === "claude-host"
+        ? { reviewerModelPolicy: codexModelPolicy }
+        : {}),
+      executorId: routed.executorId,
+      capabilityRequirements: routed.capabilityRequirements,
+      capabilityEligibility: routed.capabilityEligibility,
+      requiredCheckProfiles: routed.requiredCheckProfiles,
+      codexPolicy: routed.codexPolicy,
+    };
+  });
+  document.totals = {
+    totalEffort: 6,
+    codexEffort: 3,
+    claudeEffort: 3,
+    codexPercent: 50,
+    claudePercent: 50,
+  };
+  document.deviations = result.balance.deviations.map((entry) => entry.message);
+  await writeJson(routePath, document);
+  const verified = script(item, "routing.mjs", ["verify", runId]);
+  expect(verified.status, verified.stderr).toBe(0);
+  const requiredCheckBinding = required(
+    (
+      required(
+        (document.assignments as Record<string, unknown>[])[0],
+        "first writer pair assignment",
+      ).requiredCheckProfiles as {
+        id: string;
+        cwd: string;
+        commandSha256: string;
+      }[]
+    )[0],
+    "writer pair required check",
+  );
+  return {
+    executionPath: join(item.evidence, "execution.json"),
+    routePath,
+    document,
+    revisionHead: String(revision.head),
+    waveCount: (result.waves as readonly unknown[]).length,
+    requiredCheckBinding,
+  };
+}
+
 async function commitTasks(
   item: Fixture,
   tasks: readonly { readonly id: string; readonly completed?: boolean }[],
@@ -745,6 +876,7 @@ async function completeApprovedPlanReview(item: Fixture): Promise<void> {
 async function writeReadOnlyRouting(
   item: Fixture,
   taskIds: readonly string[],
+  risk: "medium" | "critical" = "medium",
 ): Promise<ScriptResult> {
   expect(script(item, "routing.mjs", ["prepare", runId]).status).toBe(0);
   const routePath = join(item.evidence, "routing.json");
@@ -755,7 +887,7 @@ async function writeReadOnlyRouting(
     tasks: taskIds.map((id) => ({
       id,
       effortPoints: 3,
-      risk: "medium",
+      risk,
       authority: "read-only",
       kind: "planning",
     })),
@@ -792,6 +924,15 @@ async function writeReadOnlyRouting(
       rationale: "The versioned planning fit selects the Claude host.",
       revisionSeal: revision.seal,
       modelPolicy: { source: "host-selected", model: null },
+      ...(task.risk === "critical"
+        ? {
+            reviewerModelPolicy: {
+              source: "server-allowlisted",
+              model: "gpt-5.6-sol",
+              reasoningEffort: "ultra",
+            },
+          }
+        : {}),
     };
   });
   const totalEffort = result.tasks.reduce(
@@ -810,132 +951,13 @@ async function writeReadOnlyRouting(
   return script(item, "routing.mjs", ["verify", runId]);
 }
 
-async function completeHostOnlyRouting(item: Fixture): Promise<void> {
-  await commitTasks(item, [{ id: "T001" }]);
-  const verified = await writeReadOnlyRouting(item, ["T001"]);
-  expect(verified.status, verified.stderr).toBe(0);
-}
-
-async function completeHostWriterRouting(
+async function completeHostOnlyRouting(
   item: Fixture,
   risk: "medium" | "critical" = "medium",
 ): Promise<void> {
-  await completeApprovedPlanReview(item);
   await commitTasks(item, [{ id: "T001" }]);
-  expect(script(item, "routing.mjs", ["prepare", runId]).status).toBe(0);
-  const routePath = join(item.evidence, "routing.json");
-  const document = await json(routePath);
-  const revision = document.revision as Record<string, unknown>;
-  const result = routeSddTasks({
-    neutralCodexShareBps: 5000,
-    tasks: [
-      {
-        id: "T001",
-        effortPoints: 5,
-        risk,
-        authority: "write",
-        kind: "planning",
-        dependencies: [],
-        writeScopes: ["src/claude"],
-      },
-    ],
-  });
-  const task = required(result.tasks[0], "host writer task");
-  const assignment = required(result.assignments[0], "host writer assignment");
-  expect(assignment.lane).toBe("claude-host");
-  document.state = "complete";
-  document.router = {
-    tool: "codex_worker_sdd_route",
-    request: { tasks: result.tasks, neutralCodexShareBps: 5000 },
-    result,
-  };
-  document.assignments = [
-    {
-      taskId: task.id,
-      provider: "claude-host",
-      reviewerProvider: "codex",
-      risk: task.risk,
-      authority: task.authority,
-      kind: task.kind,
-      wave: assignment.wave,
-      effort: task.effortPoints,
-      writePaths: task.writeScopes,
-      dependencies: task.dependencies,
-      rationale: "Planning work has a stronger versioned Claude-host fit.",
-      revisionSeal: revision.seal,
-      modelPolicy: { source: "host-selected", model: null },
-      ...(risk === "critical"
-        ? {
-            reviewerModelPolicy: {
-              source: "server-allowlisted",
-              model: "gpt-5.6-sol",
-              reasoningEffort: "ultra",
-            },
-          }
-        : {}),
-    },
-  ];
-  document.totals = {
-    totalEffort: 5,
-    codexEffort: 0,
-    claudeEffort: 5,
-    codexPercent: 0,
-    claudePercent: 100,
-  };
-  document.deviations = result.balance.deviations.map((entry) => entry.message);
-  await writeJson(routePath, document);
-  expect(script(item, "routing.mjs", ["verify", runId]).status).toBe(0);
-}
-
-async function writeHostCheckpoint(
-  item: Fixture,
-  extraCommit = false,
-): Promise<ScriptResult> {
-  expect(script(item, "execution.mjs", ["prepare", runId]).status).toBe(0);
-  const path = join(item.evidence, "execution.json");
-  const document = await json(path);
-  const active = document.activeWave as Record<string, unknown>;
-  const sourcePath = join(item.root, "src/claude/index.ts");
-  await writeFile(
-    sourcePath,
-    `${await readFile(sourcePath, "utf8")}export const checkpoint = 1;\n`,
-  );
-  git(item.root, ["add", "src/claude/index.ts"]);
-  git(item.root, ["commit", "-qm", "writer checkpoint"]);
-  if (extraCommit) {
-    await writeFile(
-      sourcePath,
-      `${await readFile(sourcePath, "utf8")}export const hiddenHistory = 2;\n`,
-    );
-    git(item.root, ["add", "src/claude/index.ts"]);
-    git(item.root, ["commit", "-qm", "second writer commit"]);
-  }
-  document.results = [
-    {
-      taskId: "T001",
-      provider: "claude-host",
-      wave: active.wave,
-      status: "accepted",
-      transport: "claude-host",
-      effect: "host-write",
-      baselineRevision: active.baselineRevision,
-      modelSource: "host-selected",
-      model: null,
-      reasoningEffort: null,
-      changedFiles: ["src/claude/index.ts"],
-      verification: ["The host writer stayed inside its exact path lease."],
-      checks: [
-        checkReceipt(
-          "host-writer-check",
-          git(item.root, ["rev-parse", "HEAD^{tree}"]),
-        ),
-      ],
-      startedAt: "2026-01-01T00:00:00.000Z",
-      completedAt: "2026-01-01T00:00:01.000Z",
-    },
-  ];
-  await writeJson(path, document);
-  return script(item, "execution.mjs", ["verify-wave", runId]);
+  const verified = await writeReadOnlyRouting(item, ["T001"], risk);
+  expect(verified.status, verified.stderr).toBe(0);
 }
 
 function checkReceipt(
@@ -1072,10 +1094,15 @@ async function completeHostOnlyExecution(item: Fixture): Promise<void> {
     },
   ];
   await writeJson(path, document);
+  // The packaged workflow always runs the sealed check step between the
+  // checkpoint and wave verification; mirror that contract here.
+  const checks = script(item, "execution.mjs", ["run-checks", runId]);
+  expect(checks.status, checks.stderr).toBe(0);
   const verified = script(item, "execution.mjs", ["verify-wave", runId]);
-  expect(verified.status).toBe(0);
+  expect(verified.status, verified.stderr).toBe(0);
   expect(JSON.parse(verified.stdout)).toBe(false);
-  expect(script(item, "execution.mjs", ["verify", runId]).status).toBe(0);
+  const fullVerify = script(item, "execution.mjs", ["verify", runId]);
+  expect(fullVerify.status, fullVerify.stderr).toBe(0);
 }
 
 describe("pack metadata", () => {
@@ -1528,6 +1555,8 @@ describe(
         }),
       ];
       await writeJson(checkpoint.path, checkpoint.document);
+      const finalChecks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(finalChecks.status, finalChecks.stderr).toBe(0);
       const accepted = script(item, "execution.mjs", ["verify-wave", runId]);
       expect(accepted.status, accepted.stderr).toBe(0);
     }, 75_000);
@@ -1575,6 +1604,8 @@ describe(
       ).not.toBe(0);
       result.checks = receipts;
       await writeJson(checkpoint.path, checkpoint.document);
+      const finalChecks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(finalChecks.status, finalChecks.stderr).toBe(0);
       const accepted = script(item, "execution.mjs", ["verify-wave", runId]);
       expect(accepted.status, accepted.stderr).toBe(0);
     }, 45_000);
@@ -1593,7 +1624,7 @@ describe(
       ).not.toBe(0);
     }, 75_000);
 
-    test("accepts 256 recorded writer receipts and rejects the 257th optional receipt before implementation review", async () => {
+    test("replaces caller receipts with runner receipts and rejects a writer without sealed checks", async () => {
       const item = await fixture();
       const prepared = await prepareOptionalReceiptAggregateExecution(item);
       const routing = await json(prepared.routingPath);
@@ -1679,25 +1710,44 @@ describe(
         });
         await writeJson(prepared.executionPath, execution);
 
-        const verified = script(item, "execution.mjs", ["verify-wave", runId]);
+        const checksRun = script(item, "execution.mjs", ["run-checks", runId]);
         if (index < 4) {
+          expect(checksRun.status, checksRun.stderr).toBe(0);
+          const verified = script(item, "execution.mjs", [
+            "verify-wave",
+            runId,
+          ]);
           expect(verified.status, verified.stderr).toBe(0);
           if (index === 3) {
             const acceptedExecution = await json(prepared.executionPath);
             expect(acceptedExecution.completedWaves).toEqual([1, 2, 3, 4]);
-            expect(
-              (acceptedExecution.results as Record<string, unknown>[]).flatMap(
-                (result) => result.checks as Record<string, unknown>[],
-              ),
-            ).toHaveLength(256);
+            const acceptedReceipts = (
+              acceptedExecution.results as Record<string, unknown>[]
+            ).flatMap((result) => result.checks as Record<string, unknown>[]);
+            // The 64 caller-prefilled receipts per wave are discarded: each
+            // writer carries exactly its runner-derived required receipt.
+            expect(acceptedReceipts).toHaveLength(4);
+            for (const receipt of acceptedReceipts) {
+              expect(receipt).toMatchObject({
+                source: "workflow-executed",
+                profile: requiredCheck.id,
+              });
+            }
           }
         } else {
+          // A routed writer without at least one sealed required check can
+          // never execute; caller-authored optional receipts cannot stand in.
           expect(
             assignment.requiredCheckProfiles as Record<string, unknown>[],
           ).toHaveLength(0);
           expect(checks[0]).toMatchObject({ profile: optionalCheck.id });
-          expect(verified.status).not.toBe(0);
-          expect(verified.stderr).toMatch(/aggregate limit of 256/u);
+          expect(checksRun.status).not.toBe(0);
+          expect(checksRun.stderr).toMatch(
+            /requires at least one sealed project check/u,
+          );
+          expect(
+            script(item, "execution.mjs", ["verify-wave", runId]).status,
+          ).not.toBe(0);
         }
       }
 
@@ -1705,18 +1755,13 @@ describe(
       expect(rejectedExecution.state).toBe("active");
       expect(rejectedExecution.completedWaves).toEqual([1, 2, 3, 4]);
       expect(
-        (rejectedExecution.results as Record<string, unknown>[]).flatMap(
-          (result) => result.checks as Record<string, unknown>[],
-        ),
-      ).toHaveLength(257);
-      expect(
         script(item, "implementation-review.mjs", [
           "prepare",
           runId,
           "implementation",
         ]).status,
       ).not.toBe(0);
-    }, 120_000);
+    }, 180_000);
 
     test("rejects profiled Codex results with the wrong model or effort", async () => {
       const item = await fixture();
@@ -1763,9 +1808,11 @@ describe(
       ).not.toBe(0);
       result.reasoningEffort = "high";
       await writeJson(path, document);
+      const finalChecks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(finalChecks.status, finalChecks.stderr).toBe(0);
       const accepted = script(item, "execution.mjs", ["verify-wave", runId]);
       expect(accepted.status, accepted.stderr).toBe(0);
-    }, 30_000);
+    }, 120_000);
 
     test("uses the plan-level cross-review policy instead of assignment policies", async () => {
       const item = await fixture();
@@ -1793,6 +1840,8 @@ describe(
         serverAllowlistRequired: true,
       });
       const checkpoint = await prepareProfiledHostCheckpoint(item);
+      const checks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(checks.status, checks.stderr).toBe(0);
       const verified = script(item, "execution.mjs", ["verify-wave", runId]);
       expect(verified.status, verified.stderr).toBe(0);
       expect(script(item, "execution.mjs", ["verify", runId]).status).toBe(0);
@@ -1813,7 +1862,7 @@ describe(
         reason: "project-profile-cross-review",
       });
       expect(checkpoint.document.results).toHaveLength(1);
-    }, 45_000);
+    }, 120_000);
 
     test("accepts an explicit non-Sol critical project-profile policy", async () => {
       const item = await fixture();
@@ -1898,80 +1947,9 @@ describe(
 
     test("executes every routed writer from a clean dependency checkpoint", async () => {
       const item = await fixture();
-      await completeApprovedPlanReview(item);
-      await commitTasks(item, [{ id: "T001" }, { id: "T002" }]);
-      expect(script(item, "routing.mjs", ["prepare", runId]).status).toBe(0);
-      const routePath = join(item.evidence, "routing.json");
-      const document = await json(routePath);
-      const revision = document.revision as Record<string, unknown>;
-      const result = routeSddTasks({
-        neutralCodexShareBps: 5000,
-        tasks: [
-          {
-            id: "T001",
-            effortPoints: 3,
-            risk: "medium",
-            authority: "write",
-            kind: "review",
-            dependencies: [],
-            writeScopes: ["src/claude"],
-            eligibleLanes: ["codex", "claude-host"],
-          },
-          {
-            id: "T002",
-            effortPoints: 3,
-            risk: "medium",
-            authority: "write",
-            kind: "review",
-            dependencies: [],
-            writeScopes: ["src/codex"],
-            eligibleLanes: ["codex", "claude-host"],
-          },
-        ],
-      });
-      const tasks = result.tasks;
-      document.state = "complete";
-      document.router = {
-        tool: "codex_worker_sdd_route",
-        request: { tasks, neutralCodexShareBps: 5000 },
-        result,
-      };
-      document.assignments = tasks.map((task) => {
-        const assignment = result.assignments.find(
-          (entry) => entry.taskId === task.id,
-        );
-        if (assignment === undefined) {
-          throw new Error(`missing route assignment for ${task.id}`);
-        }
-        return {
-          taskId: task.id,
-          provider: assignment.lane,
-          reviewerProvider:
-            assignment.lane === "codex" ? "claude-host" : "codex",
-          risk: task.risk,
-          authority: task.authority,
-          kind: task.kind,
-          wave: assignment.wave,
-          effort: task.effortPoints,
-          writePaths: task.writeScopes,
-          dependencies: task.dependencies,
-          rationale: "The deterministic router selected this lane.",
-          revisionSeal: revision.seal,
-          modelPolicy:
-            assignment.lane === "codex"
-              ? { source: "server-allowlisted", model: null }
-              : { source: "host-selected", model: null },
-        };
-      });
-      document.totals = {
-        totalEffort: 6,
-        codexEffort: 3,
-        claudeEffort: 3,
-        codexPercent: 50,
-        claudePercent: 50,
-      };
-      await writeJson(routePath, document);
-      expect(script(item, "routing.mjs", ["verify", runId]).status).toBe(0);
+      const pair = await completeProfiledWriterPairRouting(item);
+      const routePath = pair.routePath;
+      const document = pair.document;
 
       const firstAssignment = required(
         (document.assignments as Record<string, unknown>[])[0],
@@ -1988,12 +1966,12 @@ describe(
       await writeJson(routePath, document);
 
       expect(script(item, "execution.mjs", ["prepare", runId]).status).toBe(0);
-      const executionPath = join(item.evidence, "execution.json");
+      const executionPath = pair.executionPath;
       const routedAssignments = document.assignments as Record<
         string,
         unknown
       >[];
-      const waveCount = (result.waves as readonly unknown[]).length;
+      const waveCount = pair.waveCount;
 
       for (let index = 0; index < waveCount; index += 1) {
         const execution = await json(executionPath);
@@ -2051,8 +2029,8 @@ describe(
           baselineRevision: active.baselineRevision,
           modelSource:
             provider === "codex" ? "worker-resolved" : "host-selected",
-          model: null,
-          reasoningEffort: null,
+          model: provider === "codex" ? "gpt-5.6-sol" : null,
+          reasoningEffort: provider === "codex" ? "high" : null,
           ...(provider === "codex"
             ? {
                 jobId: `00000000-0000-4000-8000-00000000000${String(active.wave)}`,
@@ -2070,6 +2048,11 @@ describe(
             checkReceipt(
               "shared-check-id",
               git(item.root, ["rev-parse", "HEAD^{tree}"]),
+              {
+                profile: pair.requiredCheckBinding.id,
+                cwd: pair.requiredCheckBinding.cwd,
+                commandSha256: pair.requiredCheckBinding.commandSha256,
+              },
             ),
           ],
           startedAt: `2026-01-01T00:00:0${String(index * 2)}.000Z`,
@@ -2090,12 +2073,12 @@ describe(
         writerCheck.testedTree = validTree;
         await writeJson(executionPath, execution);
         if (provider === "codex") {
-          writerResult.reasoningEffort = "high";
+          writerResult.reasoningEffort = "low";
           await writeJson(executionPath, execution);
           expect(
-            script(item, "execution.mjs", ["verify-wave", runId]).status,
+            script(item, "execution.mjs", ["run-checks", runId]).status,
           ).not.toBe(0);
-          writerResult.reasoningEffort = null;
+          writerResult.reasoningEffort = "high";
 
           const alternatePatch = patchText.replace("true", "false");
           await writeFile(
@@ -2108,7 +2091,7 @@ describe(
             .digest("hex");
           await writeJson(executionPath, execution);
           expect(
-            script(item, "execution.mjs", ["verify-wave", runId]).status,
+            script(item, "execution.mjs", ["run-checks", runId]).status,
           ).not.toBe(0);
           await writeFile(
             join(dirname(item.evidence), String(writerResult.patchFile)),
@@ -2120,20 +2103,26 @@ describe(
             .digest("hex");
           await writeJson(executionPath, execution);
         }
+        const waveChecks = script(item, "execution.mjs", ["run-checks", runId]);
+        expect(waveChecks.status, waveChecks.stderr).toBe(0);
         const verified = script(item, "execution.mjs", ["verify-wave", runId]);
         expect(verified.status, verified.stderr).toBe(0);
         expect(JSON.parse(verified.stdout)).toBe(index < waveCount - 1);
       }
       expect(script(item, "execution.mjs", ["verify", runId]).status).toBe(0);
-      const executionWithRepeatedReceipts = await json(executionPath);
-      const repeatedReceiptIds = (
-        executionWithRepeatedReceipts.results as Record<string, unknown>[]
+      const executionWithRunnerReceipts = await json(executionPath);
+      const runnerReceiptProfiles = (
+        executionWithRunnerReceipts.results as Record<string, unknown>[]
       ).flatMap((result) =>
-        (result.checks as Record<string, unknown>[]).map((check) => check.id),
+        (result.checks as Record<string, unknown>[]).map(
+          (check) => check.profile,
+        ),
       );
-      expect(repeatedReceiptIds).toEqual([
-        "shared-check-id",
-        "shared-check-id",
+      // Caller-prefilled receipts were replaced by workflow-executed receipts
+      // bound to the single sealed required check on both writer waves.
+      expect(runnerReceiptProfiles).toEqual([
+        pair.requiredCheckBinding.id,
+        pair.requiredCheckBinding.id,
       ]);
       expect(
         script(item, "implementation-review.mjs", [
@@ -2150,7 +2139,7 @@ describe(
         unknown
       >;
       expect(implementationRevision.comparison).toMatchObject({
-        baseRevision: revision.head,
+        baseRevision: pair.revisionHead,
         changedPaths: ["src/claude/index.ts", "src/codex/index.ts"],
       });
       expect(implementation.checks).toHaveLength(2);
@@ -2196,7 +2185,7 @@ describe(
       const obsoletePolicy = script(item, "routing.mjs", ["verify", runId]);
       expect(obsoletePolicy.status).not.toBe(0);
 
-      routed.routingPolicyVersion = "sdd-routing-v2";
+      routed.routingPolicyVersion = "sdd-routing-v3";
       routed.planFingerprint = validFingerprint;
       routed.planFingerprint = "f".repeat(64);
       await writeJson(routePath, document);
@@ -2208,18 +2197,28 @@ describe(
 
     test("rejects a writer wave containing more than one commit", async () => {
       const item = await fixture();
-      await completeHostWriterRouting(item);
-      const result = await writeHostCheckpoint(item, true);
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/exactly one non-merge commit/u);
-    }, 45_000);
+      await completeProfiledRouting(item);
+      await prepareProfiledHostCheckpoint(item);
+      const sourcePath = join(item.root, "src/claude/index.ts");
+      await writeFile(
+        sourcePath,
+        `${await readFile(sourcePath, "utf8")}export const hiddenHistory = 2;\n`,
+      );
+      git(item.root, ["add", "src/claude/index.ts"]);
+      git(item.root, ["commit", "-qm", "second writer commit"]);
+      const checks = script(item, "execution.mjs", ["run-checks", runId]);
+      expect(checks.status).not.toBe(0);
+      expect(checks.stderr).toMatch(/exactly one non-merge commit/u);
+      expect(
+        script(item, "execution.mjs", ["verify-wave", runId]).status,
+      ).not.toBe(0);
+    }, 90_000);
 
     test("binds critical cross-provider review to Sol ultra", async () => {
       const item = await fixture();
-      await completeHostWriterRouting(item, "critical");
-      const checkpoint = await writeHostCheckpoint(item);
-      expect(checkpoint.status, checkpoint.stderr).toBe(0);
-      expect(script(item, "execution.mjs", ["verify", runId]).status).toBe(0);
+      await completeApprovedPlanReview(item);
+      await completeHostOnlyRouting(item, "critical");
+      await completeHostOnlyExecution(item);
       expect(
         script(item, "implementation-review.mjs", [
           "prepare",

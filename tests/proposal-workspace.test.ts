@@ -1,4 +1,12 @@
-import { link, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
@@ -63,6 +71,86 @@ async function makeHarness(
   await workspace.initialize();
   return { repository, workspace };
 }
+
+describe("ProposalWorkspace bootstrap", () => {
+  test("runs the operator bootstrap in the clone and marks dependencies ready", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+      proposalBootstrap: [
+        process.execPath,
+        "-e",
+        "require('node:fs').writeFileSync('bootstrap-ran.txt', process.cwd())",
+      ],
+      proposalBootstrapTimeoutMs: 30_000,
+    });
+    const workspace = new ProposalWorkspace(config, new GitClient(config));
+    await workspace.initialize();
+
+    const prepared = await workspace.prepare(
+      makeRequest(repository.root, {
+        mode: "proposal",
+        expectedRevision: repository.revision,
+        writePaths: ["src"],
+      }),
+    );
+
+    expect(prepared.request.proposalDependenciesReady).toBe(true);
+    const marker = await readFile(
+      join(prepared.request.executionRoot, "bootstrap-ran.txt"),
+      "utf8",
+    );
+    // The bootstrap must run inside the disposable clone, not the source.
+    expect(marker).toBe(prepared.request.executionRoot);
+    await prepared.cleanup();
+  });
+
+  test("fails closed and cleans up when the bootstrap command fails", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+      proposalBootstrap: [process.execPath, "-e", "process.exit(3)"],
+      proposalBootstrapTimeoutMs: 30_000,
+    });
+    const workspace = new ProposalWorkspace(config, new GitClient(config));
+    await workspace.initialize();
+
+    await expect(
+      workspace.prepare(
+        makeRequest(repository.root, {
+          mode: "proposal",
+          expectedRevision: repository.revision,
+          writePaths: ["src"],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: ERROR_CODES.RUNTIME_FAILED });
+    expect(await readdir(join(stateDirectory, "workspaces"))).toEqual([]);
+  });
+
+  test("skips the bootstrap when none is configured", async () => {
+    const { repository, workspace } = await makeHarness();
+    const prepared = await workspace.prepare(
+      makeRequest(repository.root, {
+        mode: "proposal",
+        expectedRevision: repository.revision,
+        writePaths: ["src"],
+      }),
+    );
+
+    expect(prepared.request.proposalDependenciesReady).toBeUndefined();
+    await prepared.cleanup();
+  });
+});
 
 describe("ProposalWorkspace", () => {
   test("uses the Windows null device for checkout and persisted hook isolation", async () => {

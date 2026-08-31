@@ -2,6 +2,7 @@ import { delimiter, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { ERROR_CODES, WorkerError } from "../core/errors.js";
+import { REASONING_EFFORTS, type ReasoningEffort } from "../core/types.js";
 import { BOUNDEDRELAY_VERSION } from "../version.js";
 
 export interface WorkerConfig {
@@ -15,6 +16,10 @@ export interface WorkerConfig {
   readonly gitExecutable: string;
   readonly allowedRoots: readonly string[];
   readonly allowedModels: readonly string[];
+  /** Server-owned model applied when the caller omits one; must be allowlisted. */
+  readonly defaultModel?: string;
+  /** Server-owned reasoning effort applied when the caller omits one. */
+  readonly defaultReasoningEffort?: ReasoningEffort;
   readonly enableProposals: boolean;
   readonly forwardAuthEnvironment: boolean;
   readonly forwardEnvironment: readonly string[];
@@ -23,7 +28,16 @@ export interface WorkerConfig {
   readonly maxHistory: number;
   readonly maxTaskChars: number;
   readonly maxOutputBytes: number;
+  /** Separate stderr byte budget so log noise cannot exhaust the stdout budget. */
+  readonly maxStderrBytes: number;
   readonly maxPatchBytes: number;
+  /**
+   * Operator-declared argv run once inside a fresh proposal clone so Codex can
+   * execute the project's checks there (e.g. an offline dependency install).
+   * Server-owned configuration only; never derived from caller input.
+   */
+  readonly proposalBootstrap?: readonly string[];
+  readonly proposalBootstrapTimeoutMs: number;
   readonly maxChangedFiles: number;
   readonly defaultTimeoutMs: number;
   readonly maxTimeoutMs: number;
@@ -123,6 +137,91 @@ function parseAllowedModels(value: string | undefined): readonly string[] {
   return [...new Set(models)];
 }
 
+const MODEL_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function parseDefaultModel(
+  value: string | undefined,
+  allowedModels: readonly string[],
+): string | undefined {
+  const model = nonEmpty(value);
+  if (model === undefined) {
+    return undefined;
+  }
+  if (!MODEL_IDENTIFIER.test(model)) {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      `CCW_DEFAULT_MODEL is not a valid model identifier: ${model}`,
+    );
+  }
+  if (!allowedModels.includes(model)) {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      "CCW_DEFAULT_MODEL must also be listed in CCW_ALLOWED_MODELS",
+    );
+  }
+  return model;
+}
+
+function parseDefaultReasoningEffort(
+  value: string | undefined,
+): ReasoningEffort | undefined {
+  const effort = nonEmpty(value);
+  if (effort === undefined) {
+    return undefined;
+  }
+  // The security model keeps the relaxed ultra delegation prompt an explicit
+  // per-job opt-in; a server-wide ultra default would arm it silently.
+  if (effort === "ultra") {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      "CCW_DEFAULT_REASONING_EFFORT must not be ultra; ultra stays an explicit per-job opt-in",
+    );
+  }
+  if (!(REASONING_EFFORTS as readonly string[]).includes(effort)) {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      `CCW_DEFAULT_REASONING_EFFORT must be one of: ${REASONING_EFFORTS.join(", ")}`,
+    );
+  }
+  return effort as ReasoningEffort;
+}
+
+function parseProposalBootstrap(
+  value: string | undefined,
+): readonly string[] | undefined {
+  const raw = nonEmpty(value);
+  if (raw === undefined) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      "CCW_PROPOSAL_BOOTSTRAP must be a JSON array of command arguments",
+    );
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.length > 32 ||
+    parsed.some(
+      (argument) =>
+        typeof argument !== "string" ||
+        argument === "" ||
+        argument.length > 4_096 ||
+        argument.includes("\0"),
+    )
+  ) {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      "CCW_PROPOSAL_BOOTSTRAP must be a JSON array of 1-32 non-empty strings without null bytes",
+    );
+  }
+  return parsed as readonly string[];
+}
+
 function parseAllowedRoots(
   value: string | undefined,
   projectDirectory: string | undefined,
@@ -173,6 +272,18 @@ export function loadWorkerConfig(
     );
   }
 
+  const allowedModels = parseAllowedModels(environment.CCW_ALLOWED_MODELS);
+  const defaultModel = parseDefaultModel(
+    environment.CCW_DEFAULT_MODEL,
+    allowedModels,
+  );
+  const defaultReasoningEffort = parseDefaultReasoningEffort(
+    environment.CCW_DEFAULT_REASONING_EFFORT,
+  );
+  const proposalBootstrap = parseProposalBootstrap(
+    environment.CCW_PROPOSAL_BOOTSTRAP,
+  );
+
   return {
     version: BOUNDEDRELAY_VERSION,
     codexExecutable,
@@ -182,7 +293,9 @@ export function loadWorkerConfig(
       environment.CLAUDE_PROJECT_DIR,
       processDirectory,
     ),
-    allowedModels: parseAllowedModels(environment.CCW_ALLOWED_MODELS),
+    allowedModels,
+    ...(defaultModel === undefined ? {} : { defaultModel }),
+    ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
     enableProposals: parseBoolean(environment.CCW_ENABLE_PROPOSALS, false),
     forwardAuthEnvironment: parseBoolean(
       environment.CCW_FORWARD_AUTH_ENV,
@@ -220,9 +333,24 @@ export function loadWorkerConfig(
     maxOutputBytes: parseInteger(
       "CCW_MAX_OUTPUT_BYTES",
       environment.CCW_MAX_OUTPUT_BYTES,
-      1_000_000,
+      5_000_000,
       16_384,
       10_000_000,
+    ),
+    maxStderrBytes: parseInteger(
+      "CCW_MAX_STDERR_BYTES",
+      environment.CCW_MAX_STDERR_BYTES,
+      10_000_000,
+      16_384,
+      100_000_000,
+    ),
+    ...(proposalBootstrap === undefined ? {} : { proposalBootstrap }),
+    proposalBootstrapTimeoutMs: parseInteger(
+      "CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS",
+      environment.CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS,
+      300_000,
+      1_000,
+      1_800_000,
     ),
     maxPatchBytes: parseInteger(
       "CCW_MAX_PATCH_BYTES",

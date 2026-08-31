@@ -445,6 +445,16 @@ response retains `ready`, the complete public `job` snapshot, and any available
 `finalMessage`, `proposal`, or `review`, so callers can report the actual
 failed, cancelled, blocked, or stale outcome.
 
+A failed job that salvaged a partial final message returns it with
+`finalMessagePartial: true` and a server-owned `notice` so it cannot be mistaken
+for a complete result; the snapshot additionally reports
+`partialResultAvailable: true` and the failure may carry numeric `diagnostics`
+(stop reason, exit code, event and command counters, byte counts, elapsed time).
+When the job's Codex session is recorded — `persistSession` was true or the job
+resumed an earlier session — the result adds a `resumeHint` and the snapshot
+marks `sessionPersisted: true`; pass `job.sessionId` as `resumeSessionId` on a
+follow-up job to continue that thread sequentially.
+
 An SDD review result also includes the validated `review` artifact described
 above. `finalMessage` is its normalized Codex summary. Gate readiness comes from
 `review.gate`, not from job completion or the summary text.
@@ -535,9 +545,11 @@ The result is an object with a `jobs` array:
 
 Optional fields appear only when relevant: `writePaths`, `expectedRevision`,
 `model`, `reasoningEffort`, `idempotencyKey`, `completedAt`, `queuePosition`,
-`sessionId`, `usage`, `sddReview`, and `error`. `sddReview` exposes the review
-phase, mode, seal ID, and frozen host-evidence digest without raw findings.
-`queuePosition` is one-based and appears only while queued.
+`sessionId`, `sessionPersisted`, `usage`, `partialResultAvailable`, `sddReview`,
+and `error`. `sddReview` exposes the review phase, mode, seal ID, and frozen
+host-evidence digest without raw findings. `queuePosition` is one-based and
+appears only while queued. `error.diagnostics`, when present, contains only
+server-derived numbers and fixed enums.
 
 The `revision` is an in-memory job-update counter, not a Git revision. Progress
 phases are `queued`, `starting`, `working`, `finalizing`, and `terminal`.

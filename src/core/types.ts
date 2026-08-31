@@ -80,6 +80,8 @@ export interface ResolvedJobRequest {
   readonly sddReview?: PreparedSddReview;
   readonly resumeSessionId?: string;
   readonly persistSession?: boolean;
+  /** Set when the operator bootstrap installed dependencies in the clone. */
+  readonly proposalDependenciesReady?: boolean;
 }
 
 export interface UsageSummary {
@@ -126,8 +128,12 @@ export interface PublicJobSnapshot {
   readonly queuePosition?: number;
   readonly progress: JobProgress;
   readonly sessionId?: string;
+  /** Present when the run's Codex session is recorded and can be resumed. */
+  readonly sessionPersisted?: boolean;
   readonly usage?: UsageSummary;
   readonly resultAvailable: boolean;
+  /** Present when a failed job still salvaged a partial final message. */
+  readonly partialResultAvailable?: boolean;
   readonly resultTruncated: boolean;
   readonly error?: WorkerFailure;
 }
@@ -135,6 +141,24 @@ export interface PublicJobSnapshot {
 export interface WorkerFailure {
   readonly code: string;
   readonly message: string;
+  readonly diagnostics?: FailureDiagnostics;
+}
+
+/**
+ * Server-derived run measurements attached to a failure. Every field is a
+ * number or a fixed enum produced by the worker itself; child-provided text
+ * never appears here.
+ */
+export interface FailureDiagnostics {
+  readonly stopReason?: "timeout" | "output-limit" | "protocol";
+  readonly exitCode?: number;
+  readonly eventCount?: number;
+  readonly commandsSucceeded?: number;
+  readonly commandsFailed?: number;
+  readonly stdoutBytes?: number;
+  readonly stderrBytes?: number;
+  readonly elapsedMs?: number;
+  readonly partialMessageChars?: number;
 }
 
 export interface JobResult {

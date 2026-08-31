@@ -131,7 +131,43 @@ process.stdin.on("end", () => {
       process.on("SIGTERM", () => process.exit(0));
       setInterval(() => undefined, 1_000);
       return;
+    case "timeout-after-message":
+      emit({ type: "thread.started", thread_id: "thread-timeout-partial" });
+      emit({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: "Partial: checked src/allowed.ts",
+        },
+      });
+      process.on("SIGTERM", () => process.exit(0));
+      setInterval(() => undefined, 1_000);
+      return;
+    case "stderr-noise":
+      process.stderr.write("n".repeat(100_000));
+      emit({ type: "thread.started", thread_id: "thread-stderr-noise" });
+      emit({
+        type: "item.completed",
+        item: { type: "agent_message", text: "fake final" },
+      });
+      emit({ type: "turn.completed", usage: {} });
+      break;
+    case "stderr-flood":
+      emit({ type: "thread.started", thread_id: "thread-stderr-flood" });
+      process.stderr.write("n".repeat(100_000));
+      process.on("SIGTERM", () => process.exit(0));
+      setInterval(() => undefined, 1_000);
+      return;
     case "cancel":
+      process.on("SIGTERM", () => process.exit(0));
+      setInterval(() => undefined, 1_000);
+      return;
+    case "cancel-after-message":
+      emit({ type: "thread.started", thread_id: "thread-cancel-partial" });
+      emit({
+        type: "item.completed",
+        item: { type: "agent_message", text: "half-finished thought" },
+      });
       process.on("SIGTERM", () => process.exit(0));
       setInterval(() => undefined, 1_000);
       return;
@@ -183,7 +219,10 @@ process.stdin.on("end", () => {
       });
       emit({
         type: "item.completed",
-        item: { type: "agent_message", text: "Recovered after a failed probe." },
+        item: {
+          type: "agent_message",
+          text: "Recovered after a failed probe.",
+        },
       });
       emit({ type: "turn.completed", usage: {} });
       break;

@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 
 import type { WorkerConfig } from "../config/worker-config.js";
 import type {
+  FailureDiagnostics,
   JobActivity,
   ResolvedJobRequest,
   RuntimeEvent,
@@ -70,7 +71,9 @@ export class CodexRuntime implements WorkerRuntime {
     let stopReason: StopReason | undefined;
     let forceKillTimer: NodeJS.Timeout | undefined;
     let drainTimer: NodeJS.Timeout | undefined;
-    let outputBytes = 0;
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let eventCount = 0;
     let finalMessage: string | undefined;
     let sessionId: string | undefined;
     let usage: UsageSummary | undefined;
@@ -78,6 +81,7 @@ export class CodexRuntime implements WorkerRuntime {
     let observedFailure: WorkerFailure | undefined;
     let successfulCommandCount = 0;
     let failedCommandCount = 0;
+    const startedAtMs = Date.now();
     const stdoutDecoder = new StringDecoder("utf8");
 
     let resolveCompletion: (value: RuntimeResult) => void = () => undefined;
@@ -119,6 +123,7 @@ export class CodexRuntime implements WorkerRuntime {
 
     const jsonl = new JsonlDecoder((value) => {
       const parsed = parseCodexEvent(value);
+      eventCount += 1;
       terminalEventSeen ||= parsed.terminal;
       if (parsed.event.sessionId !== undefined) {
         sessionId = parsed.event.sessionId;
@@ -141,8 +146,8 @@ export class CodexRuntime implements WorkerRuntime {
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
-      outputBytes += chunk.byteLength;
-      if (outputBytes > this.#config.maxOutputBytes) {
+      stdoutBytes += chunk.byteLength;
+      if (stdoutBytes > this.#config.maxOutputBytes) {
         observedFailure = publicRuntimeFailure("output-limit");
         requestStop("output-limit");
         return;
@@ -159,9 +164,11 @@ export class CodexRuntime implements WorkerRuntime {
       }
     });
 
+    // stderr is counted against its own budget only. It is never parsed or
+    // surfaced, so log noise must not consume the JSONL stdout budget.
     child.stderr.on("data", (chunk: Buffer) => {
-      outputBytes += chunk.byteLength;
-      if (outputBytes > this.#config.maxOutputBytes) {
+      stderrBytes += chunk.byteLength;
+      if (stderrBytes > this.#config.maxStderrBytes) {
         observedFailure = publicRuntimeFailure("output-limit");
         requestStop("output-limit");
       }
@@ -205,6 +212,37 @@ export class CodexRuntime implements WorkerRuntime {
         };
       }
 
+      // A failed run still returns whatever complete agent messages arrived
+      // before the stop, so hours of work are never silently discarded. The
+      // failed outcome, failure code, and resultTruncated flag keep a partial
+      // result from masquerading as a complete one.
+      const salvage = {
+        ...(finalMessage !== undefined && finalMessage.trim() !== ""
+          ? { finalMessage }
+          : {}),
+        ...(sessionId === undefined ? {} : { sessionId }),
+        ...(usage === undefined ? {} : { usage }),
+      };
+      const diagnostics: FailureDiagnostics = {
+        ...(stopReason === "timeout" ||
+        stopReason === "output-limit" ||
+        stopReason === "protocol"
+          ? { stopReason }
+          : {}),
+        ...(exitCode === null ? {} : { exitCode }),
+        eventCount,
+        commandsSucceeded: successfulCommandCount,
+        commandsFailed: failedCommandCount,
+        stdoutBytes,
+        stderrBytes,
+        elapsedMs: Math.max(0, Date.now() - startedAtMs),
+        partialMessageChars: finalMessage?.length ?? 0,
+      };
+      const diagnosed = (failure: WorkerFailure): WorkerFailure => ({
+        ...failure,
+        diagnostics,
+      });
+
       if (stopReason === "user" || stopReason === "shutdown") {
         finish({ outcome: "cancelled", resultTruncated: false });
         return;
@@ -212,8 +250,9 @@ export class CodexRuntime implements WorkerRuntime {
       if (stopReason === "timeout") {
         finish({
           outcome: "failed",
-          resultTruncated: false,
-          failure: publicRuntimeFailure("timeout"),
+          resultTruncated: true,
+          ...salvage,
+          failure: diagnosed(publicRuntimeFailure("timeout")),
         });
         return;
       }
@@ -229,7 +268,8 @@ export class CodexRuntime implements WorkerRuntime {
         finish({
           outcome: "failed",
           resultTruncated: stopReason === "output-limit",
-          failure: observedFailure,
+          ...salvage,
+          failure: diagnosed(observedFailure),
         });
         return;
       }
@@ -237,7 +277,8 @@ export class CodexRuntime implements WorkerRuntime {
         finish({
           outcome: "failed",
           resultTruncated: false,
-          failure: publicRuntimeFailure("nonzero-exit"),
+          ...salvage,
+          failure: diagnosed(publicRuntimeFailure("nonzero-exit")),
         });
         return;
       }
@@ -249,11 +290,12 @@ export class CodexRuntime implements WorkerRuntime {
         finish({
           outcome: "failed",
           resultTruncated: false,
-          failure: {
+          ...salvage,
+          failure: diagnosed({
             code: ERROR_CODES.PROTOCOL_ERROR,
             message:
               "Codex exited successfully without a complete final result",
-          },
+          }),
         });
         return;
       }

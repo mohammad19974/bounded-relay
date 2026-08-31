@@ -431,6 +431,15 @@ export class JobManager {
       allowedRoots: this.#config.allowedRoots,
     });
     const taskHash = createHash("sha256").update(task).digest("hex");
+    // Server defaults never apply to a resumed session: injecting a model or
+    // effort the caller did not choose would silently switch the recorded
+    // thread mid-conversation. Resumes inherit only explicit caller values.
+    const resuming = input.resumeSessionId !== undefined;
+    const resolvedModel =
+      input.model ?? (resuming ? undefined : this.#config.defaultModel);
+    const resolvedReasoningEffort =
+      input.reasoningEffort ??
+      (resuming ? undefined : this.#config.defaultReasoningEffort);
 
     return {
       task,
@@ -446,10 +455,13 @@ export class JobManager {
       ...(input.expectedRevision === undefined
         ? {}
         : { expectedRevision: input.expectedRevision.toLowerCase() }),
-      ...(input.model === undefined ? {} : { model: input.model }),
-      ...(input.reasoningEffort === undefined
+      // Server-owned defaults fill omitted fields so a job never silently
+      // falls back to the Codex CLI's built-in model at minimal effort.
+      // CCW_DEFAULT_MODEL is allowlist-validated at configuration load.
+      ...(resolvedModel === undefined ? {} : { model: resolvedModel }),
+      ...(resolvedReasoningEffort === undefined
         ? {}
-        : { reasoningEffort: input.reasoningEffort }),
+        : { reasoningEffort: resolvedReasoningEffort }),
       ...(input.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: input.idempotencyKey }),
@@ -635,6 +647,22 @@ export class JobManager {
     } else if (runtimeResult?.outcome === "cancelled") {
       this.#markCancelled(job);
     } else {
+      // Salvage the partial final message so a timeout or budget kill does
+      // not discard the run's work. SDD reviews are excluded: only validated
+      // review evidence may represent a review outcome.
+      if (
+        job.request.sddReview === undefined &&
+        runtimeResult?.finalMessage !== undefined &&
+        runtimeResult.finalMessage.trim() !== ""
+      ) {
+        job.finalMessage = runtimeResult.finalMessage;
+      }
+      if (runtimeResult?.sessionId !== undefined) {
+        job.sessionId = runtimeResult.sessionId;
+      }
+      if (runtimeResult?.usage !== undefined) {
+        job.usage = runtimeResult.usage;
+      }
       this.#markFailed(
         job,
         normalizePublicRuntimeFailure(runtimeResult?.failure),
@@ -804,9 +832,17 @@ export class JobManager {
         sinceLastUpdateMs: millisecondsSinceLastUpdate(job),
       },
       ...(job.sessionId === undefined ? {} : { sessionId: job.sessionId }),
+      ...((job.request.persistSession === true ||
+        job.request.resumeSessionId !== undefined) &&
+      job.sessionId !== undefined
+        ? { sessionPersisted: true }
+        : {}),
       ...(job.usage === undefined ? {} : { usage: job.usage }),
       resultAvailable:
         job.status === "completed" && job.finalMessage !== undefined,
+      ...(job.status === "failed" && job.finalMessage !== undefined
+        ? { partialResultAvailable: true }
+        : {}),
       resultTruncated: job.resultTruncated,
       ...(job.failure === undefined ? {} : { error: job.failure }),
     };

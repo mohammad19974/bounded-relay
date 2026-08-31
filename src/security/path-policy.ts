@@ -151,7 +151,10 @@ export async function resolveWorkingSet(input: {
         "writePaths is valid only for proposal jobs",
       );
     }
-    return { cwd, repositoryRoot, executionRoot: cwd };
+    // Analysis executes from the repository root — already validated against
+    // CCW_ALLOWED_ROOTS above — so Codex sees root-level configuration and
+    // sibling packages. The requested cwd remains a prompt focus hint only.
+    return { cwd, repositoryRoot, executionRoot: repositoryRoot };
   }
 
   if (input.writePaths === undefined || input.writePaths.length === 0) {

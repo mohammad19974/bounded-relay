@@ -524,19 +524,79 @@ function assertProfiledModelsAllowed(
   }
 }
 
-function presentJobResult(result: JobResult, includePatch: boolean): unknown {
-  if (result.proposal === undefined) {
-    return result;
+// One final message may use at most this many bytes on the wire. The frame
+// carries the payload twice (text + structuredContent), so this keeps a
+// message-dominated result far below MAX_TOOL_RESULT_WIRE_BYTES instead of
+// making the whole result permanently unreadable.
+const MAX_FINAL_MESSAGE_WIRE_BYTES = 3_000_000;
+
+export function presentJobResult(
+  result: JobResult,
+  includePatch: boolean,
+): unknown {
+  let presented: Record<string, unknown> = { ...result };
+  const notices: string[] = [];
+  let finalMessagePartial = false;
+  if (result.job.status === "failed" && result.finalMessage !== undefined) {
+    finalMessagePartial = true;
+    notices.push(
+      "PARTIAL RESULT: the job failed before completion; finalMessage may be incomplete.",
+    );
   }
-  const { patch, ...metadata } = result.proposal;
-  return {
-    ...result,
-    proposal: {
-      ...metadata,
-      patchAvailable: patch !== undefined,
-      ...(includePatch && patch !== undefined ? { patch } : {}),
-    },
-  };
+  if (
+    result.finalMessage !== undefined &&
+    Buffer.byteLength(result.finalMessage, "utf8") >
+      MAX_FINAL_MESSAGE_WIRE_BYTES
+  ) {
+    finalMessagePartial = true;
+    notices.push("finalMessage was truncated to fit the MCP transport frame.");
+    presented = {
+      ...presented,
+      finalMessage: truncateUtf8(
+        result.finalMessage,
+        MAX_FINAL_MESSAGE_WIRE_BYTES,
+      ),
+    };
+  }
+  if (finalMessagePartial) {
+    presented = {
+      ...presented,
+      finalMessagePartial: true,
+      notice: notices.join(" "),
+    };
+  }
+  if (
+    result.ready &&
+    result.job.sessionPersisted === true &&
+    result.job.sessionId !== undefined
+  ) {
+    presented = {
+      ...presented,
+      resumeHint:
+        "Pass job.sessionId as resumeSessionId on a follow-up job to continue this Codex thread with its accumulated context. Resume sequentially only, and pass model and reasoningEffort explicitly again: server defaults are not applied to resumed jobs.",
+    };
+  }
+  if (result.proposal !== undefined) {
+    const { patch, ...metadata } = result.proposal;
+    presented = {
+      ...presented,
+      proposal: {
+        ...metadata,
+        patchAvailable: patch !== undefined,
+        ...(includePatch && patch !== undefined ? { patch } : {}),
+      },
+    };
+  }
+  return presented;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const bounded = Buffer.from(value, "utf8")
+    .subarray(0, maxBytes)
+    .toString("utf8");
+  // A byte cut inside a multi-byte codepoint decodes to U+FFFD at the end;
+  // drop it so the truncated text stays valid.
+  return bounded.endsWith("�") ? bounded.slice(0, -1) : bounded;
 }
 
 function isUnsuccessfulJobResult(result: JobResult): boolean {
@@ -612,7 +672,7 @@ function oversizedToolResult(): ToolCallResult {
     error: {
       code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED,
       message:
-        "The result is too large for the MCP stdio transport; request it without the patch body or lower CCW_MAX_PATCH_BYTES",
+        "The result is too large for the MCP stdio transport; request it without the patch body, lower CCW_MAX_PATCH_BYTES, or lower CCW_MAX_OUTPUT_BYTES for oversized final messages",
     },
   };
   return {

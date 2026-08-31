@@ -55,9 +55,95 @@ describe("loadWorkerConfig", () => {
     expect(config.maxConcurrent).toBe(4);
   });
 
+  test("parses server-owned model defaults and the separate stderr budget", () => {
+    const config = loadWorkerConfig(
+      {
+        CCW_ALLOWED_MODELS: "gpt-5.6-sol,gpt-5.6-terra",
+        CCW_DEFAULT_MODEL: "gpt-5.6-sol",
+        CCW_DEFAULT_REASONING_EFFORT: "xhigh",
+        CCW_MAX_STDERR_BYTES: "32768",
+      },
+      tmpdir(),
+    );
+
+    expect(config.defaultModel).toBe("gpt-5.6-sol");
+    expect(config.defaultReasoningEffort).toBe("xhigh");
+    expect(config.maxStderrBytes).toBe(32_768);
+  });
+
+  test("parses the proposal bootstrap argv and timeout", () => {
+    const config = loadWorkerConfig(
+      {
+        CCW_PROPOSAL_BOOTSTRAP:
+          '["pnpm","install","--offline","--frozen-lockfile","--ignore-scripts"]',
+        CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS: "60000",
+      },
+      tmpdir(),
+    );
+
+    expect(config.proposalBootstrap).toEqual([
+      "pnpm",
+      "install",
+      "--offline",
+      "--frozen-lockfile",
+      "--ignore-scripts",
+    ]);
+    expect(config.proposalBootstrapTimeoutMs).toBe(60_000);
+  });
+
+  test("leaves the proposal bootstrap unset by default", () => {
+    const config = loadWorkerConfig({}, tmpdir());
+
+    expect(config.proposalBootstrap).toBeUndefined();
+    expect(config.proposalBootstrapTimeoutMs).toBe(300_000);
+  });
+
+  test.each([
+    ["not-json"],
+    ['"pnpm install"'],
+    ["[]"],
+    ['["pnpm", ""]'],
+    ['["pnpm", 42]'],
+  ])("rejects an invalid proposal bootstrap declaration %j", (value) => {
+    expect(() =>
+      loadWorkerConfig({ CCW_PROPOSAL_BOOTSTRAP: value }, tmpdir()),
+    ).toThrow("CCW_PROPOSAL_BOOTSTRAP");
+  });
+
+  test("leaves model defaults unset and uses the raised output budgets by default", () => {
+    const config = loadWorkerConfig({}, tmpdir());
+
+    expect(config.defaultModel).toBeUndefined();
+    expect(config.defaultReasoningEffort).toBeUndefined();
+    expect(config.maxOutputBytes).toBe(5_000_000);
+    expect(config.maxStderrBytes).toBe(10_000_000);
+  });
+
   test.each([
     [{ CCW_ENABLE_PROPOSALS: "perhaps" }, "boolean"],
     [{ CCW_ALLOWED_MODELS: "--dangerous model" }, "model identifier"],
+    [{ CCW_DEFAULT_MODEL: "gpt-5.6-sol" }, "CCW_ALLOWED_MODELS"],
+    [
+      {
+        CCW_ALLOWED_MODELS: "gpt-5.6-sol",
+        CCW_DEFAULT_MODEL: "gpt-5.6-luna",
+      },
+      "CCW_ALLOWED_MODELS",
+    ],
+    [
+      {
+        CCW_ALLOWED_MODELS: "ok-model",
+        CCW_DEFAULT_MODEL: "--dangerous",
+      },
+      "model identifier",
+    ],
+    [
+      { CCW_DEFAULT_REASONING_EFFORT: "infinite" },
+      "CCW_DEFAULT_REASONING_EFFORT",
+    ],
+    // The security model keeps the relaxed ultra delegation prompt an explicit
+    // per-job opt-in, so a server-wide ultra default must fail closed.
+    [{ CCW_DEFAULT_REASONING_EFFORT: "ultra" }, "explicit per-job"],
     [{ CCW_FORWARD_ENV: "GOOD,NOT-VALID" }, "environment variable"],
     [
       {

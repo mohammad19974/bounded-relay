@@ -349,11 +349,14 @@ describe.runIf(process.platform !== "win32")(
         .completion;
       expect(result).toMatchObject({
         outcome: "failed",
-        failure: { code: ERROR_CODES.PROTOCOL_ERROR },
+        failure: {
+          code: ERROR_CODES.PROTOCOL_ERROR,
+          diagnostics: { stopReason: "protocol" },
+        },
       });
     });
 
-    test("kills a child that exceeds the combined output limit", async () => {
+    test("kills a child that exceeds the stdout budget", async () => {
       await ensureExecutable(fakeCodex);
       const root = await makeStateDirectory();
       cleanupPaths.push(root);
@@ -384,7 +387,83 @@ describe.runIf(process.platform !== "win32")(
       ).completion;
       expect(result).toMatchObject({
         outcome: "failed",
+        resultTruncated: true,
         failure: { code: ERROR_CODES.TIMEOUT },
+      });
+      expect(result.finalMessage).toBeUndefined();
+    });
+
+    test("returns the partial final message and diagnostics when a run times out", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(runtimeConfig(), {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "timeout-after-message",
+      });
+      // The fixture emits its partial message immediately and then hangs; the
+      // generous timeout keeps the message-before-timeout ordering stable
+      // even when the whole suite spawns processes in parallel.
+      const result = await runtime.start(
+        makeRequest(root, { timeoutMs: 5_000 }),
+        () => undefined,
+      ).completion;
+      expect(result).toMatchObject({
+        outcome: "failed",
+        resultTruncated: true,
+        finalMessage: "Partial: checked src/allowed.ts",
+        failure: {
+          code: ERROR_CODES.TIMEOUT,
+          diagnostics: {
+            stopReason: "timeout",
+            eventCount: 2,
+            commandsSucceeded: 0,
+            commandsFailed: 0,
+            partialMessageChars: "Partial: checked src/allowed.ts".length,
+          },
+        },
+      });
+    }, 10_000);
+
+    test("keeps stderr noise from consuming the stdout budget", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(
+        runtimeConfig({ maxOutputBytes: 16_384 }),
+        {
+          PATH: process.env.PATH,
+          FAKE_CODEX_SCENARIO: "stderr-noise",
+        },
+      );
+      const result = await runtime.start(makeRequest(root), () => undefined)
+        .completion;
+      expect(result).toMatchObject({
+        outcome: "completed",
+        finalMessage: "fake final",
+        resultTruncated: false,
+      });
+    });
+
+    test("kills a child that floods stderr past its own budget", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(
+        runtimeConfig({ maxStderrBytes: 16_384 }),
+        {
+          PATH: process.env.PATH,
+          FAKE_CODEX_SCENARIO: "stderr-flood",
+        },
+      );
+      const result = await runtime.start(
+        makeRequest(root, { timeoutMs: 5_000 }),
+        () => undefined,
+      ).completion;
+      expect(result).toMatchObject({
+        outcome: "failed",
+        resultTruncated: true,
+        failure: { code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED },
       });
     });
 
@@ -410,6 +489,35 @@ describe.runIf(process.platform !== "win32")(
         resultTruncated: false,
       });
     });
+
+    test("drops an already-received partial message on cancellation", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      let sawMessage: () => void = () => undefined;
+      const messageSeen = new Promise<void>((resolvePromise) => {
+        sawMessage = resolvePromise;
+      });
+      const runtime = new CodexRuntime(runtimeConfig(), {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "cancel-after-message",
+      });
+      const handle = runtime.start(
+        makeRequest(root, { timeoutMs: 30_000 }),
+        (event) => {
+          if (event.agentMessage !== undefined) {
+            sawMessage();
+          }
+        },
+      );
+      await messageSeen;
+      await handle.cancel("user");
+      // Strict equality: cancellation must not carry salvage fields.
+      await expect(handle.completion).resolves.toEqual({
+        outcome: "cancelled",
+        resultTruncated: false,
+      });
+    }, 15_000);
 
     test("normalizes a terminal failure event and nonzero stderr failure", async () => {
       await ensureExecutable(fakeCodex);
@@ -440,6 +548,7 @@ describe.runIf(process.platform !== "win32")(
         failure: {
           code: ERROR_CODES.RUNTIME_FAILED,
           message: "Codex exited unsuccessfully",
+          diagnostics: { exitCode: 7 },
         },
       });
     });
@@ -458,9 +567,15 @@ describe.runIf(process.platform !== "win32")(
       ).resolves.toMatchObject({
         outcome: "failed",
         resultTruncated: false,
+        finalMessage: "All checks passed even though none ran successfully.",
         failure: {
           code: ERROR_CODES.RUNTIME_FAILED,
           message: "Codex command execution failed",
+          diagnostics: {
+            commandsSucceeded: 0,
+            commandsFailed: 1,
+            exitCode: 0,
+          },
         },
       });
     });

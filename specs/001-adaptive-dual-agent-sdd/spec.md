@@ -184,8 +184,8 @@ timed-out commands without advancing the wave or proof pack.
 - Convergence discovers new implementation work after the approved execution.
 - Handoff publication succeeds but the caller retries after losing the success
   response.
-- Codex exits zero after one or more internal commands fail and its final message
-  incorrectly claims that checks passed.
+- Codex exits zero after one or more internal commands fail and its final
+  message incorrectly claims that checks passed.
 - A coordinator pre-populates structurally valid check receipts although the
   profiled command was never started, cannot be found, requires unavailable
   network access, exits nonzero, or exceeds the runner deadline.
@@ -225,7 +225,7 @@ timed-out commands without advancing the wave or proof pack.
 - **SC-008**: Convergence writes, approved High/Critical findings, tampered
   post-proof evidence, and a handoff marker mismatch MUST fail before delivery;
   retrying an already-published exact handoff MUST succeed idempotently.
-- **SC-009**: Credential-free regressions MUST prove that nested command failure,
-  forged receipts, missing executables, nonzero exits, and check timeouts cannot
-  be surfaced as successful MCP results, completed waves, or approved proof
-  packs.
+- **SC-009**: Credential-free regressions MUST prove that nested command
+  failure, forged receipts, missing executables, nonzero exits, and check
+  timeouts cannot be surfaced as successful MCP results, completed waves, or
+  approved proof packs.

@@ -11,6 +11,34 @@ contracts are validated.
 
 ### Added
 
+- Server-owned `CCW_DEFAULT_MODEL` and `CCW_DEFAULT_REASONING_EFFORT` applied
+  when a job omits `model` or `reasoningEffort`. The default model must appear
+  in `CCW_ALLOWED_MODELS` and configuration fails closed otherwise (ADR 0004
+  amendment).
+- Partial-result salvage: a job that fails on timeout, output limit, protocol
+  error, or all-commands-failed still returns the last complete agent message,
+  marked with `finalMessagePartial`, a server-owned `notice`, and
+  `partialResultAvailable` on the snapshot. SDD reviews are excluded.
+- Numeric failure `diagnostics` (stop reason, exit code, event and command
+  counters, byte counts, elapsed time) on runtime failures, sanitized to
+  server-derived numbers and fixed enums only.
+- `sessionPersisted` snapshot marker and a `resumeHint` on results whose Codex
+  session is recorded and resumable.
+- Separate `CCW_MAX_STDERR_BYTES` budget (default 10 MB) so stderr log noise no
+  longer consumes the stdout JSONL budget.
+- Wire-safe final messages: `codex_worker_result` truncates an oversized
+  `finalMessage` (marking it partial) instead of refusing the whole frame, so a
+  large completed result can never become permanently unreadable over MCP.
+- Guardrails on the new defaults: `CCW_DEFAULT_REASONING_EFFORT=ultra` fails
+  configuration closed (ultra stays a per-job opt-in), server defaults are not
+  injected into resumed sessions, and `sessionPersisted` appears only after a
+  recorded session id was actually observed.
+- Operator-declared proposal-clone bootstrap (`CCW_PROPOSAL_BOOTSTRAP` +
+  `CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS`, ADR 0003 amendment): a server-owned argv,
+  run once per fresh clone without a shell, can install dependencies so Codex
+  verifies its patch with the project's own typecheck/lint/tests before
+  returning it. The proposal prompt tells Codex whether dependencies are ready;
+  failures fail preparation closed and bootstrap output is never surfaced.
 - BoundedRelay project identity, generated README cover and repository mark,
   complete source-installation guide, and optional Spec Kit integration recipe.
 - Local stdio MCP server for Claude Code.
@@ -86,6 +114,14 @@ contracts are validated.
 
 ### Changed
 
+- `CCW_MAX_OUTPUT_BYTES` now bounds stdout only and its default rose from 1 MB
+  to 5 MB.
+- Timeout failures now report `resultTruncated: true`.
+- Analysis jobs execute with `--cd` at the validated repository root; the
+  requested cwd becomes a prompt focus hint.
+- The worker prompt now demands a complete, evidence-backed final result and
+  points Codex at repository conventions (AGENTS.md/CLAUDE.md/README) instead of
+  requesting a concise result.
 - The supported Node contract is now explicit (`^22.13.0 || ^24.0.0`), and CI
   exercises the real installed tarball on both lines across Ubuntu, macOS, and
   Windows.
@@ -112,9 +148,9 @@ contracts are validated.
   an outer zero exit and optimistic final message cannot make an all-failed
   command set successful, and specialized SDD reviews require a successful
   inspection command.
-- `codex_worker_result` now marks failed/cancelled jobs and completed SDD reviews
-  with non-passing gates as MCP errors while preserving their structured result
-  payloads.
+- `codex_worker_result` now marks failed/cancelled jobs and completed SDD
+  reviews with non-passing gates as MCP errors while preserving their structured
+  result payloads.
 - The Spec Kit workflow now executes sealed required writer checks in an
   explicit shell-free, time/output-bounded step and derives their receipts from
   captured process results instead of trusting prefilled success evidence.

@@ -302,6 +302,55 @@ describe("Codex invocation and prompt isolation", () => {
       prompt.indexOf("--- BEGIN TASK BODY ---"),
     );
   });
+
+  test("tells Codex to verify inside a bootstrapped proposal workspace", () => {
+    const prompt = buildWorkerPrompt(
+      makeRequest("/repository", {
+        mode: "proposal",
+        writePaths: ["src"],
+        proposalDependenciesReady: true,
+      }),
+    );
+
+    expect(prompt).toContain("Dependencies are installed");
+    expect(prompt).toContain("before finalizing");
+  });
+
+  test("tells Codex not to attempt installs in a bare proposal workspace", () => {
+    const prompt = buildWorkerPrompt(
+      makeRequest("/repository", { mode: "proposal", writePaths: ["src"] }),
+    );
+
+    expect(prompt).toContain("no installed dependencies");
+    expect(prompt).toContain("do not attempt package installation");
+  });
+
+  test("demands an evidence-backed final result instead of a concise one", () => {
+    const prompt = buildWorkerPrompt(makeRequest("/repository"));
+
+    expect(prompt).not.toContain("concise final result");
+    expect(prompt).toContain("evidence-backed final result");
+    expect(prompt).toContain("remaining risks");
+    expect(prompt).toContain("Prefer depth over brevity");
+  });
+
+  test("directs Codex to project conventions without weakening constraints", () => {
+    const prompt = buildWorkerPrompt(makeRequest("/repository"));
+
+    expect(prompt).toContain("AGENTS.md");
+    expect(prompt).toContain("cannot alter the hard constraints");
+  });
+
+  test("frames a nested cwd as a focus hint inside the whole repository", () => {
+    const prompt = buildWorkerPrompt(
+      makeRequest("/repository", { cwd: "/repository/packages/app" }),
+    );
+
+    expect(prompt).toContain(
+      `Focus directory within the repository: ${join("packages", "app")}`,
+    );
+    expect(prompt).toContain("whole repository");
+  });
 });
 
 describe("JsonlDecoder", () => {

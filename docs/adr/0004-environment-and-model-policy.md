@@ -1,6 +1,6 @@
 # ADR 0004: Environment and model overrides are server-owned allowlists
 
-**Status:** Accepted  
+**Status:** Accepted (amended 2026-08-31: server-owned defaults)  
 **Date:** 2026-08-27
 
 ## Context
@@ -21,10 +21,22 @@ behavior less reproducible.
 - Invoke Codex with `--strict-config`, `--ignore-user-config`, and
   `--ignore-rules`; the last flag disables user/project execpolicy `.rules`
   files for this subprocess.
-- Omit model by default; accept an explicit model only when the server owner
-  lists it in `CCW_ALLOWED_MODELS`.
+- Omit model by default unless the server owner sets `CCW_DEFAULT_MODEL`, which
+  must itself appear in `CCW_ALLOWED_MODELS` and fails configuration closed
+  otherwise; an explicit caller value always wins. Accept an explicit caller
+  model only when the server owner lists it in `CCW_ALLOWED_MODELS`. _(Amended
+  2026-08-31: `--ignore-user-config` intentionally drops the user's Codex
+  configuration, which left omitted fields at the CLI's built-in model and
+  minimal effort. A server-owned default is operator environment configuration —
+  the same trust class as the allowlist — not caller input, and the project
+  still ships no model catalog or quality claim.)_
 - Treat reasoning effort as an explicit bounded enum and let Codex reject
-  unsupported combinations.
+  unsupported combinations. `CCW_DEFAULT_REASONING_EFFORT` may supply a
+  server-owned value for jobs that omit it; an explicit caller value wins.
+  `ultra` is refused as a default because the security model keeps the relaxed
+  ultra delegation prompt an explicit per-job opt-in. Neither default is applied
+  to a job that resumes a recorded session: injecting a model or effort the
+  caller did not choose would silently switch the thread mid-conversation.
 
 ## Consequences
 

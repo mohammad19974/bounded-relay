@@ -141,8 +141,8 @@ The gate fails closed when evidence is missing, malformed, stale, belongs to a
 different seal or phase, reuses a review ID, requests changes, or came from
 draft mode. A job can complete successfully while its gate remains blocked or
 stale internally, but `codex_worker_result` marks that non-passing terminal
-result as an MCP error while preserving the review artifact. Host evidence is
-an attestation supplied by the host; BoundedRelay does not authenticate Claude,
+result as an MCP error while preserving the review artifact. Host evidence is an
+attestation supplied by the host; BoundedRelay does not authenticate Claude,
 launch it, or verify a declared model label.
 
 ### Proposal mode
