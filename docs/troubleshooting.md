@@ -249,13 +249,17 @@ arguments, private reasoning, a guessed percentage, or a completion estimate.
 
 The subprocess exceeded the job timeout. Increase the per-job `timeoutMs` only
 up to `CCW_MAX_TIMEOUT_MS`, narrow the task, or split analysis into bounded
-jobs. A timeout is not proof that Codex was frozen.
+jobs. A timeout is not proof that Codex was frozen. The failed result still
+carries any complete agent message received before the stop, marked as partial,
+plus numeric failure diagnostics.
 
 ## `OUTPUT_LIMIT_EXCEEDED`
 
-Combined Codex stdout and stderr exceeded `CCW_MAX_OUTPUT_BYTES`. Narrow the
-task before increasing the limit. Large output enters local process memory and
-may later enter Claude Code context.
+Codex stdout exceeded `CCW_MAX_OUTPUT_BYTES`, or stderr exceeded its separate
+`CCW_MAX_STDERR_BYTES` budget. Narrow the task or instruct Codex to keep command
+output quiet before increasing the limits. Large output enters local process
+memory and may later enter Claude Code context. The failed result still carries
+any complete agent message received before the stop, marked as partial.
 
 ## `PATCH_LIMIT_EXCEEDED`
 

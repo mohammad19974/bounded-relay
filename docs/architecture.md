@@ -167,10 +167,10 @@ only after hard task eligibility is applied. Write policy can only narrow task
 scopes. Check definitions contribute canonical `argv`/`cwd` digests for later
 receipt matching. Profile parsing and routing never execute them. After routing
 approval and a committed writer checkpoint, the optional Spec Kit workflow owns
-an explicit required-check step that executes the sealed vectors without a
-shell and derives receipts from captured process results. Codex model policy
-resolves by risk, then kind, then default and remains subject to the server
-allowlist; no profile field selects a Claude host model.
+an explicit required-check step that executes the sealed vectors without a shell
+and derives receipts from captured process results. Codex model policy resolves
+by risk, then kind, then default and remains subject to the server allowlist; no
+profile field selects a Claude host model.
 
 The normalized profile fingerprint and profiled plan fingerprint are content
 addresses, not signatures or identity attestations. See
@@ -293,16 +293,27 @@ codex \
 The exact executable is resolved to a canonical, executable regular file before
 the server starts. The runtime parses JSONL incrementally, maps events to a
 fixed safe activity vocabulary, counts real events, captures the last agent
-message, records reported token usage, limits combined stdout/stderr bytes, and
-terminates the child process tree on cancellation or timeout.
+message, records reported token usage, enforces separate stdout and stderr byte
+budgets, and terminates the child process tree on cancellation or timeout.
+Analysis jobs execute with `--cd` at the validated repository root; the
+requested cwd remains a prompt focus hint so Codex still sees root-level
+configuration and sibling packages.
+
+A failed run — timeout, output limit, protocol error, or command failure — still
+returns the last complete agent message received before the stop, when one
+exists. The outcome stays `failed`, `resultTruncated` marks budget stops, and
+the failure carries numeric server-derived diagnostics (stop reason, exit code,
+event and command counters, byte counts, elapsed time). Diagnostics never
+include child-provided text. SDD review jobs are excluded from partial salvage:
+only validated review evidence may represent a review outcome.
 
 The outer `codex exec` status and final prose are not sufficient success
-evidence. Completed `command_execution` items are classified from their
-`status` and numeric `exit_code`. If every attempted command failed, the runtime
-fails the job even when the outer process exits zero and the final message
-claims success. A strict SDD review additionally requires at least one
-successful inspection command; a generic analysis may recover from an
-exploratory failure by completing a later command successfully.
+evidence. Completed `command_execution` items are classified from their `status`
+and numeric `exit_code`. If every attempted command failed, the runtime fails
+the job even when the outer process exits zero and the final message claims
+success. A strict SDD review additionally requires at least one successful
+inspection command; a generic analysis may recover from an exploratory failure
+by completing a later command successfully.
 
 On Windows, executable resolution prefers native `.com`/`.exe` commands. The
 standard npm-installed `codex.cmd` is mapped to its adjacent
@@ -387,6 +398,13 @@ The clone is created with `--no-local`, `--no-checkout`, and `--no-tags`; its
 remote is removed and Git hooks are disabled. The worker rejects ref or `HEAD`
 changes and validates the final path set before building the patch.
 
+When the operator declares `CCW_PROPOSAL_BOOTSTRAP` (ADR 0003 amendment), the
+worker runs that argv once inside the fresh clone — without a shell, under the
+standard child-environment allowlist and a bounded timeout — so Codex can
+execute the project's own checks against its patch. The proposal prompt states
+whether dependencies are ready; a bootstrap failure fails preparation closed and
+its output is never surfaced.
+
 The source repository is read for cloning and precondition checks. It is never
 the proposal execution root and the returned patch is never applied to its
 worktree by the MCP proposal path.
@@ -414,8 +432,12 @@ body:
   idempotency key;
 - optional SDD phase, review mode, seal ID, and frozen host-evidence digest;
 - timestamps and real event counters;
-- observed session ID and token usage when Codex reports them;
-- result availability, truncation, and a sanitized terminal error.
+- observed session ID and token usage when Codex reports them, plus a
+  `sessionPersisted` marker when the run's Codex session is recorded and
+  resumable;
+- result availability, partial-result availability for failed jobs that salvaged
+  a final message, truncation, and a sanitized terminal error with optional
+  numeric diagnostics.
 
 The original task remains in process memory for the lifetime of its job. The
 final model message and proposal artifact remain in bounded in-memory history

@@ -395,6 +395,14 @@ export async function startMcpServer(
             ...(input.idempotencyKey === undefined
               ? {}
               : { idempotencyKey: input.idempotencyKey }),
+            // A proposal must be able to continue the analyze thread that
+            // planned it, and to record its own thread for a repair round.
+            ...(input.resumeSessionId === undefined
+              ? {}
+              : { resumeSessionId: input.resumeSessionId }),
+            ...(input.persistSession === undefined
+              ? {}
+              : { persistSession: input.persistSession }),
           }),
         ),
     );
@@ -524,19 +532,96 @@ function assertProfiledModelsAllowed(
   }
 }
 
-function presentJobResult(result: JobResult, includePatch: boolean): unknown {
-  if (result.proposal === undefined) {
-    return result;
+// One final message may use at most this many bytes on the wire. The frame
+// carries the payload twice (text + structuredContent), so this keeps a
+// message-dominated result far below MAX_TOOL_RESULT_WIRE_BYTES instead of
+// making the whole result permanently unreadable.
+const MAX_FINAL_MESSAGE_WIRE_BYTES = 3_000_000;
+// Never shrink a message below this, even beside a huge patch: the caller can
+// re-request the result without the patch, but the answer itself must survive.
+const MIN_FINAL_MESSAGE_WIRE_BYTES = 64 * 1024;
+// Room for the snapshot, proposal metadata, notices, and JSON escaping.
+const WIRE_ENVELOPE_RESERVE_BYTES = 256 * 1024;
+
+export function presentJobResult(
+  result: JobResult,
+  includePatch: boolean,
+): unknown {
+  let presented: Record<string, unknown> = { ...result };
+  const notices: string[] = [];
+  let finalMessagePartial = false;
+  if (result.job.status === "failed" && result.finalMessage !== undefined) {
+    finalMessagePartial = true;
+    notices.push(
+      "PARTIAL RESULT: the job failed before completion; finalMessage may be incomplete.",
+    );
   }
-  const { patch, ...metadata } = result.proposal;
-  return {
-    ...result,
-    proposal: {
-      ...metadata,
-      patchAvailable: patch !== undefined,
-      ...(includePatch && patch !== undefined ? { patch } : {}),
-    },
-  };
+  // The message budget must leave room for a patch that is also on the wire,
+  // otherwise a policy-valid proposal result is refused whole and its patch
+  // becomes unreachable once the clone is deleted.
+  const patchWireBytes =
+    includePatch && result.proposal?.patch !== undefined
+      ? Buffer.byteLength(result.proposal.patch, "utf8")
+      : 0;
+  const messageBudget = Math.max(
+    MIN_FINAL_MESSAGE_WIRE_BYTES,
+    Math.min(
+      MAX_FINAL_MESSAGE_WIRE_BYTES,
+      MAX_TOOL_RESULT_WIRE_BYTES / 2 -
+        patchWireBytes -
+        WIRE_ENVELOPE_RESERVE_BYTES,
+    ),
+  );
+  if (
+    result.finalMessage !== undefined &&
+    Buffer.byteLength(result.finalMessage, "utf8") > messageBudget
+  ) {
+    finalMessagePartial = true;
+    notices.push("finalMessage was truncated to fit the MCP transport frame.");
+    presented = {
+      ...presented,
+      finalMessage: truncateUtf8(result.finalMessage, messageBudget),
+    };
+  }
+  if (finalMessagePartial) {
+    presented = {
+      ...presented,
+      finalMessagePartial: true,
+      notice: notices.join(" "),
+    };
+  }
+  if (
+    result.ready &&
+    result.job.sessionPersisted === true &&
+    result.job.sessionId !== undefined
+  ) {
+    presented = {
+      ...presented,
+      resumeHint:
+        "Pass job.sessionId as resumeSessionId on a follow-up job to continue this Codex thread with its accumulated context. Resume sequentially only; a resumed job that omits model or reasoningEffort uses the same server defaults as any other job, so pass them explicitly when the thread needs a different pair.",
+    };
+  }
+  if (result.proposal !== undefined) {
+    const { patch, ...metadata } = result.proposal;
+    presented = {
+      ...presented,
+      proposal: {
+        ...metadata,
+        patchAvailable: patch !== undefined,
+        ...(includePatch && patch !== undefined ? { patch } : {}),
+      },
+    };
+  }
+  return presented;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const bounded = Buffer.from(value, "utf8")
+    .subarray(0, maxBytes)
+    .toString("utf8");
+  // A byte cut inside a multi-byte codepoint decodes to U+FFFD at the end;
+  // drop it so the truncated text stays valid.
+  return bounded.endsWith("�") ? bounded.slice(0, -1) : bounded;
 }
 
 function isUnsuccessfulJobResult(result: JobResult): boolean {
@@ -612,7 +697,7 @@ function oversizedToolResult(): ToolCallResult {
     error: {
       code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED,
       message:
-        "The result is too large for the MCP stdio transport; request it without the patch body or lower CCW_MAX_PATCH_BYTES",
+        "The result is too large for the MCP stdio transport; request it without the patch body, lower CCW_MAX_PATCH_BYTES, or lower CCW_MAX_OUTPUT_BYTES for oversized final messages",
     },
   };
   return {

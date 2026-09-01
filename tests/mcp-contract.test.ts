@@ -70,6 +70,7 @@ describe("MCP stdio contract", () => {
         compatible: true,
         authenticated: true,
         proposalsEnabled: false,
+        proposalBootstrapConfigured: false,
         transport: "stdio",
         routingPolicies: {
           legacy: { routingPolicyVersion: "sdd-routing-v2" },
@@ -400,6 +401,8 @@ describe("MCP stdio contract", () => {
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
         ready: true,
+        finalMessage: "All checks passed even though none ran successfully.",
+        finalMessagePartial: true,
         job: {
           status: "failed",
           error: {
@@ -408,6 +411,40 @@ describe("MCP stdio contract", () => {
           },
         },
       });
+      expect(String(asRecord(result.structuredContent).notice)).toContain(
+        "PARTIAL RESULT",
+      );
+    } finally {
+      await testClient.close();
+    }
+  }, 20_000);
+
+  it("advertises a resumable session for a persisted completed job", async () => {
+    const testClient = await startTestClient(false);
+    try {
+      const submitted = await testClient.client.callTool({
+        name: "codex_worker_analyze",
+        arguments: {
+          task: "Analyze with a resumable session.",
+          cwd: testClient.repository.root,
+          persistSession: true,
+        },
+      });
+      const jobId = String(asRecord(submitted.structuredContent).id);
+      await waitForMcpTerminal(testClient.client, jobId);
+
+      const result = await testClient.client.callTool({
+        name: "codex_worker_result",
+        arguments: { jobId },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ready: true,
+        job: { sessionPersisted: true, sessionId: "thread-test" },
+      });
+      expect(String(asRecord(result.structuredContent).resumeHint)).toContain(
+        "resumeSessionId",
+      );
     } finally {
       await testClient.close();
     }
@@ -706,7 +743,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function asStringArray(value: unknown): readonly string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string")
+  ) {
     throw new TypeError("Expected an array of strings in the MCP response");
   }
   return value;

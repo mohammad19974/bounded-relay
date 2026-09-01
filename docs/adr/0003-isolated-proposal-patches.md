@@ -1,7 +1,22 @@
 # ADR 0003: Proposals use disposable clones and are never applied
 
-**Status:** Accepted  
+**Status:** Accepted (amended 2026-08-31: operator-declared clone bootstrap)  
 **Date:** 2026-08-27
+
+> **Amendment (2026-08-31).** The isolated clone may be materialized with
+> dependencies before Codex starts, via an operator-declared,
+> caller-inaccessible bootstrap argv (`CCW_PROPOSAL_BOOTSTRAP`, e.g. an offline,
+> scripts-ignored package-manager install). The bootstrap is server-owned
+> environment configuration, runs once per clone without a shell under the
+> standard child environment allowlist with a bounded timeout, and any failure
+> fails the preparation closed. Its output is never surfaced. Patch validation
+> semantics are unchanged: `git add --all` honors the checked-out ignore rules,
+> and any bootstrap artifact that is not ignored still fails the changed-path
+> allowlist. The recommended recipe avoids lifecycle scripts and network access
+> (for example `pnpm install --offline --frozen-lockfile --ignore-scripts`);
+> operators accept the residual risk of the command they declare. This exists so
+> Codex can run the project's own typecheck and tests against its patch inside
+> the clone instead of shipping it unverified.
 
 ## Context
 

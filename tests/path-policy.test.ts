@@ -99,7 +99,9 @@ describe("resolveWorkingSet", () => {
 
     expect(result.cwd).toBe(await realpath(fixture.nested));
     expect(result.repositoryRoot).toBe(await realpath(fixture.repository));
-    expect(result.executionRoot).toBe(await realpath(fixture.nested));
+    // Analysis executes from the repository root so Codex can see root-level
+    // configuration and sibling packages; cwd stays a focus hint only.
+    expect(result.executionRoot).toBe(await realpath(fixture.repository));
     expect(result.writePaths).toBeUndefined();
   });
 

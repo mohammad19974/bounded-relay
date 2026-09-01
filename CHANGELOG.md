@@ -11,6 +11,70 @@ contracts are validated.
 
 ### Added
 
+- Server-owned `CCW_DEFAULT_MODEL` and `CCW_DEFAULT_REASONING_EFFORT` applied
+  when a job omits `model` or `reasoningEffort`. The default model must appear
+  in `CCW_ALLOWED_MODELS` and configuration fails closed otherwise (ADR 0004
+  amendment).
+- Partial-result salvage: a job that fails on timeout, output limit, protocol
+  error, or all-commands-failed still returns the last complete agent message,
+  marked with `finalMessagePartial`, a server-owned `notice`, and
+  `partialResultAvailable` on the snapshot. SDD reviews are excluded.
+- Numeric failure `diagnostics` (stop reason, exit code, event and command
+  counters, byte counts, elapsed time) on runtime failures, sanitized to
+  server-derived numbers and fixed enums only.
+- `sessionPersisted` snapshot marker and a `resumeHint` on results whose Codex
+  session is recorded and resumable.
+- Separate `CCW_MAX_STDERR_BYTES` budget (default 10 MB) so stderr log noise no
+  longer consumes the stdout JSONL budget.
+- Wire-safe final messages: `codex_worker_result` truncates an oversized
+  `finalMessage` (marking it partial) instead of refusing the whole frame, so a
+  large completed result can never become permanently unreadable over MCP.
+- Guardrails on the new defaults: `CCW_DEFAULT_REASONING_EFFORT=ultra` fails
+  configuration closed (ultra stays a per-job opt-in), and `sessionPersisted`
+  appears only after a recorded session id was actually observed.
+- Work preservation on every terminal path: a completed Codex answer survives a
+  failing proposal finalization, workspace cleanup, or lease release; a cancel
+  that lands after the runtime finished returns the real result instead of an
+  empty cancellation; the chunk that trips the stdout budget is still parsed so
+  the answer it carries is not discarded; and terminal-history eviction now
+  orders by completion time so a long job's result is readable before it can be
+  evicted.
+- `codex_worker_propose` now forwards `resumeSessionId` and `persistSession`, so
+  a proposal can continue the analyze thread that planned it and record its own
+  thread for a repair round. Both fields were previously accepted by the schema
+  and silently dropped.
+- The request fingerprint includes `resumeSessionId` and `persistSession`, so
+  two continuations of different threads cannot collide on one idempotency key.
+- Structured SDD reviews get a JSON-only output instruction instead of the prose
+  thoroughness contract, which could otherwise corrupt their schema-constrained
+  decision.
+- The final-message wire budget accounts for an attached patch, so a
+  policy-valid proposal result is never refused whole; bootstrap failures name
+  their exit status or timeout.
+- Policy observability: `config`, `doctor`, and `codex_worker_capabilities` now
+  surface the server-owned defaults (`defaultModel`, `defaultReasoningEffort`),
+  the stderr budget, and whether a proposal bootstrap is configured, so the
+  effective delegation policy is verifiable without reading source. `doctor` and
+  capabilities also report a `buildId` — the running module's build fingerprint,
+  which the frozen package version cannot provide — and warn when a configured
+  bootstrap command cannot be resolved on `PATH`.
+- Bootstrap robustness: its output is discarded rather than buffered, so a
+  verbose but successful install is no longer turned into a proposal failure; a
+  cancel aborts a running bootstrap instead of waiting out the whole window
+  while the repository lease is held.
+- A JSONL consumer's own typed error is reported as itself instead of being
+  relabelled as a non-JSON stdout line.
+- `CCW_REQUIRE_TASK_SECTIONS`: an optional structural contract for
+  caller-authored task bodies. A delegation missing a required heading is
+  refused before a job is created, with the missing headings named, so an
+  under-specified brief fails closed instead of quietly producing a weak result.
+  Worker-generated SDD review tasks are exempt.
+- Operator-declared proposal-clone bootstrap (`CCW_PROPOSAL_BOOTSTRAP` +
+  `CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS`, ADR 0003 amendment): a server-owned argv,
+  run once per fresh clone without a shell, can install dependencies so Codex
+  verifies its patch with the project's own typecheck/lint/tests before
+  returning it. The proposal prompt tells Codex whether dependencies are ready;
+  failures fail preparation closed and bootstrap output is never surfaced.
 - BoundedRelay project identity, generated README cover and repository mark,
   complete source-installation guide, and optional Spec Kit integration recipe.
 - Local stdio MCP server for Claude Code.
@@ -86,6 +150,14 @@ contracts are validated.
 
 ### Changed
 
+- `CCW_MAX_OUTPUT_BYTES` now bounds stdout only and its default rose from 1 MB
+  to 5 MB.
+- Timeout failures now report `resultTruncated: true`.
+- Analysis jobs execute with `--cd` at the validated repository root; the
+  requested cwd becomes a prompt focus hint.
+- The worker prompt now demands a complete, evidence-backed final result and
+  points Codex at repository conventions (AGENTS.md/CLAUDE.md/README) instead of
+  requesting a concise result.
 - The supported Node contract is now explicit (`^22.13.0 || ^24.0.0`), and CI
   exercises the real installed tarball on both lines across Ubuntu, macOS, and
   Windows.
@@ -112,9 +184,9 @@ contracts are validated.
   an outer zero exit and optimistic final message cannot make an all-failed
   command set successful, and specialized SDD reviews require a successful
   inspection command.
-- `codex_worker_result` now marks failed/cancelled jobs and completed SDD reviews
-  with non-passing gates as MCP errors while preserving their structured result
-  payloads.
+- `codex_worker_result` now marks failed/cancelled jobs and completed SDD
+  reviews with non-passing gates as MCP errors while preserving their structured
+  result payloads.
 - The Spec Kit workflow now executes sealed required writer checks in an
   explicit shell-free, time/output-bounded step and derives their receipts from
   captured process results instead of trusting prefilled success evidence.
