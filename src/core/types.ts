@@ -218,10 +218,20 @@ export interface WorkerHealth {
   readonly codexVersion?: string;
   readonly gitVersion?: string;
   readonly compatible: boolean;
+  /**
+   * Build fingerprint of the running worker module. The package version is a
+   * frozen constant, so it cannot reveal that a long-lived server predates a
+   * rebuild; this can.
+   */
+  readonly buildId?: string;
   readonly authenticated?: boolean;
   readonly allowedRoots: readonly string[];
   readonly allowedModels: readonly string[];
+  /** Server-owned defaults, surfaced so operators can verify effective policy. */
+  readonly defaultModel?: string;
+  readonly defaultReasoningEffort?: ReasoningEffort;
   readonly proposalsEnabled: boolean;
+  readonly proposalBootstrapConfigured: boolean;
   readonly maxConcurrent: number;
   readonly maxQueued: number;
   readonly authEnvironmentForwarding: boolean;

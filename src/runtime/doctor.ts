@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import type { WorkerConfig } from "../config/worker-config.js";
 import type { WorkerHealth } from "../core/types.js";
 import { buildChildEnvironment } from "../security/environment-policy.js";
+import { resolveExecutable } from "../security/executable-policy.js";
 import { redactKnownValues } from "../security/redaction-policy.js";
 
 interface ProbeResult {
@@ -57,6 +60,11 @@ export async function collectWorkerHealth(
     execHelp.ok &&
     globalHelp.requiredTextPresent &&
     execHelp.requiredTextPresent;
+  const buildId = moduleBuildId();
+  const bootstrapResolvable = await isBootstrapResolvable(
+    config,
+    childEnvironment,
+  );
   const warnings = [
     ...(!loginStatus.ok
       ? [
@@ -74,6 +82,13 @@ export async function collectWorkerHealth(
     ...(!compatible
       ? ["This Codex CLI does not advertise every flag required by the worker"]
       : []),
+    // A bootstrap that cannot start fails every proposal at preparation time,
+    // so surface it before the first delegated write instead of after.
+    ...(bootstrapResolvable === false
+      ? [
+          "The configured proposal bootstrap command could not be resolved on PATH",
+        ]
+      : []),
   ];
 
   return {
@@ -88,15 +103,61 @@ export async function collectWorkerHealth(
       ? {}
       : { gitVersion: summarizeProbeOutput(gitVersion.output) }),
     compatible,
+    ...(buildId === undefined ? {} : { buildId }),
     authenticated: loginStatus.ok,
     allowedRoots: config.allowedRoots,
     allowedModels: config.allowedModels,
+    ...(config.defaultModel === undefined
+      ? {}
+      : { defaultModel: config.defaultModel }),
+    ...(config.defaultReasoningEffort === undefined
+      ? {}
+      : { defaultReasoningEffort: config.defaultReasoningEffort }),
     proposalsEnabled: config.enableProposals,
+    proposalBootstrapConfigured: config.proposalBootstrap !== undefined,
     maxConcurrent: config.maxConcurrent,
     maxQueued: config.maxQueued,
     authEnvironmentForwarding: config.forwardAuthEnvironment,
     warnings,
   };
+}
+
+/**
+ * Modification time of the running worker module, as a stable build
+ * fingerprint. It answers "is this process older than my last build?", which
+ * the frozen package version cannot.
+ */
+function moduleBuildId(): string | undefined {
+  try {
+    return statSync(fileURLToPath(import.meta.url)).mtime.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Confirms the operator's bootstrap executable can actually start. It runs no
+ * bootstrap: an unresolvable command would otherwise fail every proposal only
+ * at preparation time.
+ */
+async function isBootstrapResolvable(
+  config: WorkerConfig,
+  childEnvironment: NodeJS.ProcessEnv,
+): Promise<boolean | undefined> {
+  const executable = config.proposalBootstrap?.[0];
+  if (executable === undefined) {
+    return undefined;
+  }
+  try {
+    await resolveExecutable(
+      executable,
+      childEnvironment.PATH,
+      "proposal bootstrap command",
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function runProbe(

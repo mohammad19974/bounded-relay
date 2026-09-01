@@ -395,6 +395,14 @@ export async function startMcpServer(
             ...(input.idempotencyKey === undefined
               ? {}
               : { idempotencyKey: input.idempotencyKey }),
+            // A proposal must be able to continue the analyze thread that
+            // planned it, and to record its own thread for a repair round.
+            ...(input.resumeSessionId === undefined
+              ? {}
+              : { resumeSessionId: input.resumeSessionId }),
+            ...(input.persistSession === undefined
+              ? {}
+              : { persistSession: input.persistSession }),
           }),
         ),
     );
@@ -529,6 +537,11 @@ function assertProfiledModelsAllowed(
 // message-dominated result far below MAX_TOOL_RESULT_WIRE_BYTES instead of
 // making the whole result permanently unreadable.
 const MAX_FINAL_MESSAGE_WIRE_BYTES = 3_000_000;
+// Never shrink a message below this, even beside a huge patch: the caller can
+// re-request the result without the patch, but the answer itself must survive.
+const MIN_FINAL_MESSAGE_WIRE_BYTES = 64 * 1024;
+// Room for the snapshot, proposal metadata, notices, and JSON escaping.
+const WIRE_ENVELOPE_RESERVE_BYTES = 256 * 1024;
 
 export function presentJobResult(
   result: JobResult,
@@ -543,19 +556,31 @@ export function presentJobResult(
       "PARTIAL RESULT: the job failed before completion; finalMessage may be incomplete.",
     );
   }
+  // The message budget must leave room for a patch that is also on the wire,
+  // otherwise a policy-valid proposal result is refused whole and its patch
+  // becomes unreachable once the clone is deleted.
+  const patchWireBytes =
+    includePatch && result.proposal?.patch !== undefined
+      ? Buffer.byteLength(result.proposal.patch, "utf8")
+      : 0;
+  const messageBudget = Math.max(
+    MIN_FINAL_MESSAGE_WIRE_BYTES,
+    Math.min(
+      MAX_FINAL_MESSAGE_WIRE_BYTES,
+      MAX_TOOL_RESULT_WIRE_BYTES / 2 -
+        patchWireBytes -
+        WIRE_ENVELOPE_RESERVE_BYTES,
+    ),
+  );
   if (
     result.finalMessage !== undefined &&
-    Buffer.byteLength(result.finalMessage, "utf8") >
-      MAX_FINAL_MESSAGE_WIRE_BYTES
+    Buffer.byteLength(result.finalMessage, "utf8") > messageBudget
   ) {
     finalMessagePartial = true;
     notices.push("finalMessage was truncated to fit the MCP transport frame.");
     presented = {
       ...presented,
-      finalMessage: truncateUtf8(
-        result.finalMessage,
-        MAX_FINAL_MESSAGE_WIRE_BYTES,
-      ),
+      finalMessage: truncateUtf8(result.finalMessage, messageBudget),
     };
   }
   if (finalMessagePartial) {
@@ -573,7 +598,7 @@ export function presentJobResult(
     presented = {
       ...presented,
       resumeHint:
-        "Pass job.sessionId as resumeSessionId on a follow-up job to continue this Codex thread with its accumulated context. Resume sequentially only, and pass model and reasoningEffort explicitly again: server defaults are not applied to resumed jobs.",
+        "Pass job.sessionId as resumeSessionId on a follow-up job to continue this Codex thread with its accumulated context. Resume sequentially only; a resumed job that omits model or reasoningEffort uses the same server defaults as any other job, so pass them explicitly when the thread needs a different pair.",
     };
   }
   if (result.proposal !== undefined) {

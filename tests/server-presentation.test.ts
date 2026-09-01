@@ -92,6 +92,49 @@ describe("presentJobResult", () => {
     expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(3_000_000);
   });
 
+  test("keeps a large patch plus a large message inside the transport frame", () => {
+    const withPatch: JobResult = {
+      ready: true,
+      job: snapshot({ mode: "proposal" }),
+      finalMessage: "m".repeat(2_500_000),
+      proposal: {
+        effect: "proposal",
+        baselineRevision: "a".repeat(40),
+        changedFiles: ["src/a.ts"],
+        patch: "p".repeat(1_900_000),
+        patchBytes: 1_900_000,
+        patchSha256: "b".repeat(64),
+      },
+    };
+
+    const presented = presentJobResult(withPatch, true) as Record<
+      string,
+      unknown
+    >;
+
+    // The frame carries the payload twice, so message + patch together must
+    // stay under the transport cap or the whole result becomes unreadable.
+    expect(
+      Buffer.byteLength(JSON.stringify(presented), "utf8") * 2,
+    ).toBeLessThan(8 * 1024 * 1024);
+    expect(presented.finalMessagePartial).toBe(true);
+    const proposal = presented.proposal as Record<string, unknown>;
+    expect(proposal.patch).toBe("p".repeat(1_900_000));
+  });
+
+  test("never truncates mid-codepoint at a non-aligned budget", () => {
+    // 3-byte codepoints do not divide the cap evenly, so the cut lands inside
+    // a character and the guard must trim it.
+    const presented = presentJobResult(
+      result({}, "☃".repeat(1_200_000)),
+      false,
+    ) as Record<string, unknown>;
+
+    const message = String(presented.finalMessage);
+    expect(message.includes("�")).toBe(false);
+    expect(message.endsWith("☃")).toBe(true);
+  });
+
   test("combines the failed-partial and transport-truncation notices", () => {
     const presented = presentJobResult(
       result(

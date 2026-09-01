@@ -147,12 +147,15 @@ export class CodexRuntime implements WorkerRuntime {
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > this.#config.maxOutputBytes) {
+      const overBudget = stdoutBytes > this.#config.maxOutputBytes;
+      if (overBudget) {
         observedFailure = publicRuntimeFailure("output-limit");
         requestStop("output-limit");
-        return;
       }
       try {
+        // Parse the chunk even when it trips the budget: those bytes were
+        // already received, and they often carry the completed answer. The run
+        // still fails, but its work is not thrown away.
         jsonl.push(stdoutDecoder.write(chunk));
       } catch (error) {
         const workerError = toWorkerError(error);

@@ -34,9 +34,12 @@ behavior less reproducible.
   unsupported combinations. `CCW_DEFAULT_REASONING_EFFORT` may supply a
   server-owned value for jobs that omit it; an explicit caller value wins.
   `ultra` is refused as a default because the security model keeps the relaxed
-  ultra delegation prompt an explicit per-job opt-in. Neither default is applied
-  to a job that resumes a recorded session: injecting a model or effort the
-  caller did not choose would silently switch the thread mid-conversation.
+  ultra delegation prompt an explicit per-job opt-in. The defaults apply to
+  resumed jobs as well: omitting the flags does not preserve a thread's original
+  model, it drops Codex to its built-in default at minimal effort, so a resume
+  without defaults would be strictly weaker than the operator declared. Callers
+  needing a different pair pass it explicitly, and the result's `resumeHint`
+  says so.
 
 ## Consequences
 

@@ -137,6 +137,115 @@ describe("ProposalWorkspace bootstrap", () => {
     expect(await readdir(join(stateDirectory, "workspaces"))).toEqual([]);
   });
 
+  test("kills a hanging bootstrap at its configured timeout", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+      // A bootstrap that never exits must not hang preparation forever: it
+      // runs before the runtime timer exists and holds the repository lease.
+      proposalBootstrap: [
+        process.execPath,
+        "-e",
+        "setInterval(() => undefined, 1000)",
+      ],
+      proposalBootstrapTimeoutMs: 1_500,
+    });
+    const workspace = new ProposalWorkspace(config, new GitClient(config));
+    await workspace.initialize();
+
+    const startedAt = Date.now();
+    await expect(
+      workspace.prepare(
+        makeRequest(repository.root, {
+          mode: "proposal",
+          expectedRevision: repository.revision,
+          writePaths: ["src"],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: ERROR_CODES.RUNTIME_FAILED });
+    expect(Date.now() - startedAt).toBeLessThan(20_000);
+    expect(await readdir(join(stateDirectory, "workspaces"))).toEqual([]);
+  }, 30_000);
+
+  test("succeeds for a bootstrap that prints more than the old output buffer", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+      // A verbose but successful install must not be turned into a proposal
+      // failure just because its reporter is chatty.
+      proposalBootstrap: [
+        process.execPath,
+        "-e",
+        "process.stdout.write('x'.repeat(6_000_000))",
+      ],
+      proposalBootstrapTimeoutMs: 60_000,
+    });
+    const workspace = new ProposalWorkspace(config, new GitClient(config));
+    await workspace.initialize();
+
+    const prepared = await workspace.prepare(
+      makeRequest(repository.root, {
+        mode: "proposal",
+        expectedRevision: repository.revision,
+        writePaths: ["src"],
+      }),
+    );
+    expect(prepared.request.proposalDependenciesReady).toBe(true);
+    await prepared.cleanup();
+  }, 30_000);
+
+  test("aborts a running bootstrap when its job is cancelled", async () => {
+    const repository = await createTestRepository();
+    cleanupPaths.push(repository.root);
+    const stateDirectory = await makeStateDirectory();
+    cleanupPaths.push(stateDirectory);
+    const config = makeConfig({
+      allowedRoots: [repository.root],
+      enableProposals: true,
+      stateDirectory,
+      proposalBootstrap: [
+        process.execPath,
+        "-e",
+        "setInterval(() => undefined, 1000)",
+      ],
+      proposalBootstrapTimeoutMs: 600_000,
+    });
+    const workspace = new ProposalWorkspace(config, new GitClient(config));
+    await workspace.initialize();
+    const controller = new AbortController();
+
+    const preparation = workspace.prepare(
+      makeRequest(repository.root, {
+        mode: "proposal",
+        expectedRevision: repository.revision,
+        writePaths: ["src"],
+      }),
+      controller.signal,
+    );
+    setTimeout(() => {
+      controller.abort();
+    }, 300);
+
+    // A cancel must not wait out the whole bootstrap window while the
+    // repository proposal lease is held.
+    const startedAt = Date.now();
+    await expect(preparation).rejects.toMatchObject({
+      code: ERROR_CODES.RUNTIME_FAILED,
+    });
+    expect(Date.now() - startedAt).toBeLessThan(20_000);
+    expect(await readdir(join(stateDirectory, "workspaces"))).toEqual([]);
+  }, 30_000);
+
   test("skips the bootstrap when none is configured", async () => {
     const { repository, workspace } = await makeHarness();
     const prepared = await workspace.prepare(

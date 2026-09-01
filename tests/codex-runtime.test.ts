@@ -373,6 +373,30 @@ describe.runIf(process.platform !== "win32")(
       });
     });
 
+    test("salvages a final answer carried by the chunk that trips the stdout budget", async () => {
+      await ensureExecutable(fakeCodex);
+      const root = await makeStateDirectory();
+      cleanupPaths.push(root);
+      const runtime = new CodexRuntime(
+        runtimeConfig({ maxOutputBytes: 16_384 }),
+        {
+          PATH: process.env.PATH,
+          FAKE_CODEX_SCENARIO: "output-limit-with-final",
+        },
+      );
+      const result = await runtime.start(makeRequest(root), () => undefined)
+        .completion;
+
+      // The bytes were already received and paid for; discarding them throws
+      // away a complete answer the run had finished producing.
+      expect(result).toMatchObject({
+        outcome: "failed",
+        resultTruncated: true,
+        finalMessage: "COMPLETE FINAL ANSWER",
+        failure: { code: ERROR_CODES.OUTPUT_LIMIT_EXCEEDED },
+      });
+    });
+
     test("times out a non-terminating child", async () => {
       await ensureExecutable(fakeCodex);
       const root = await makeStateDirectory();
@@ -423,6 +447,40 @@ describe.runIf(process.platform !== "win32")(
           },
         },
       });
+      // Every documented diagnostic field must be present, not just the ones
+      // a toMatchObject assertion happens to name. `exitCode` is the sole
+      // conditional field: it is absent when the child died on a signal.
+      const diagnostics = result.failure?.diagnostics ?? {};
+      for (const field of [
+        "stopReason",
+        "eventCount",
+        "commandsSucceeded",
+        "commandsFailed",
+        "stdoutBytes",
+        "stderrBytes",
+        "elapsedMs",
+        "partialMessageChars",
+      ] as const) {
+        expect(diagnostics[field], `missing diagnostic ${field}`).toBeDefined();
+      }
+      expect(
+        Object.keys(diagnostics).filter(
+          (key) =>
+            ![
+              "stopReason",
+              "exitCode",
+              "eventCount",
+              "commandsSucceeded",
+              "commandsFailed",
+              "stdoutBytes",
+              "stderrBytes",
+              "elapsedMs",
+              "partialMessageChars",
+            ].includes(key),
+        ),
+      ).toEqual([]);
+      expect(diagnostics.stdoutBytes).toBeGreaterThan(0);
+      expect(diagnostics.elapsedMs).toBeGreaterThan(0);
     }, 10_000);
 
     test("keeps stderr noise from consuming the stdout budget", async () => {

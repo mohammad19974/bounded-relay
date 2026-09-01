@@ -26,14 +26,18 @@ export class JsonlDecoder {
       if (line.trim() === "") {
         continue;
       }
+      let value: unknown;
       try {
-        this.#onValue(JSON.parse(line) as unknown);
+        value = JSON.parse(line) as unknown;
       } catch {
         throw new WorkerError(
           ERROR_CODES.PROTOCOL_ERROR,
           "Codex emitted a non-JSON line on stdout",
         );
       }
+      // The consumer's own typed error must reach the caller instead of being
+      // relabelled as a parse failure it is not.
+      this.#onValue(value);
     }
 
     if (flush && this.#buffer.trim() !== "") {

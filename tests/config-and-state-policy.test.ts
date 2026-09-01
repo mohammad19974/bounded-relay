@@ -4,7 +4,10 @@ import { delimiter, join, parse } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { loadWorkerConfig } from "../src/config/worker-config.js";
+import {
+  loadWorkerConfig,
+  presentEffectiveConfig,
+} from "../src/config/worker-config.js";
 import { ERROR_CODES } from "../src/core/errors.js";
 import { initializeSecurityPolicy } from "../src/security/state-policy.js";
 import { makeConfig } from "./helpers.js";
@@ -108,6 +111,37 @@ describe("loadWorkerConfig", () => {
     expect(() =>
       loadWorkerConfig({ CCW_PROPOSAL_BOOTSTRAP: value }, tmpdir()),
     ).toThrow("CCW_PROPOSAL_BOOTSTRAP");
+  });
+
+  test("presents the complete effective delegation policy", () => {
+    const presented = presentEffectiveConfig(
+      makeConfig({
+        allowedModels: ["gpt-5.6-sol"],
+        defaultModel: "gpt-5.6-sol",
+        defaultReasoningEffort: "high",
+        proposalBootstrap: ["pnpm", "install", "--offline"],
+      }),
+    );
+
+    // Every operator-tunable policy knob must be verifiable from `config`
+    // output without reading source.
+    expect(presented).toMatchObject({
+      defaultModel: "gpt-5.6-sol",
+      defaultReasoningEffort: "high",
+      proposalBootstrap: ["pnpm", "install", "--offline"],
+      limits: {
+        maxStderrBytes: 10_000_000,
+        proposalBootstrapTimeoutMs: 300_000,
+      },
+    });
+  });
+
+  test("omits unset model defaults and the bootstrap from the presentation", () => {
+    const presented = presentEffectiveConfig(makeConfig());
+
+    expect(presented.defaultModel).toBeUndefined();
+    expect(presented.defaultReasoningEffort).toBeUndefined();
+    expect(presented.proposalBootstrap).toBeUndefined();
   });
 
   test("leaves model defaults unset and uses the raised output budgets by default", () => {

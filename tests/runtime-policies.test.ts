@@ -12,7 +12,7 @@ import { delimiter, join, resolve } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { ERROR_CODES } from "../src/core/errors.js";
+import { ERROR_CODES, WorkerError } from "../src/core/errors.js";
 import { buildCodexInvocation } from "../src/runtime/codex-command.js";
 import { JsonlDecoder } from "../src/runtime/jsonl-decoder.js";
 import { buildChildEnvironment } from "../src/security/environment-policy.js";
@@ -367,6 +367,19 @@ describe("JsonlDecoder", () => {
       { type: "future" },
       { value: 1 },
     ]);
+  });
+
+  test("reports a consumer's own error instead of relabelling it as non-JSON", () => {
+    const decoder = new JsonlDecoder(() => {
+      throw new WorkerError(
+        ERROR_CODES.PROTOCOL_ERROR,
+        "Codex emitted a JSONL event without a string type",
+      );
+    });
+
+    expect(() => {
+      decoder.push('{"no":"type"}\n');
+    }).toThrow("without a string type");
   });
 
   test.each(["not-json\n", '{"partial":'])(

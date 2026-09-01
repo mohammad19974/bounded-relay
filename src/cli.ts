@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { presentEffectiveConfig } from "./config/worker-config.js";
 import { ERROR_CODES, WorkerError, toWorkerError } from "./core/errors.js";
 import { shutdownWorker } from "./core/shutdown.js";
 import { startMcpServer } from "./mcp/server.js";
@@ -125,34 +126,8 @@ async function main(args = process.argv.slice(2)): Promise<void> {
   }
 
   if (command === "config") {
-    const { config } = application;
     process.stdout.write(
-      `${JSON.stringify(
-        {
-          version: config.version,
-          codexExecutable: config.codexExecutable,
-          gitExecutable: config.gitExecutable,
-          allowedRoots: config.allowedRoots,
-          allowedModels: config.allowedModels,
-          proposalsEnabled: config.enableProposals,
-          authEnvironmentForwarding: config.forwardAuthEnvironment,
-          forwardedEnvironmentNames: config.forwardEnvironment,
-          limits: {
-            maxConcurrent: config.maxConcurrent,
-            maxQueued: config.maxQueued,
-            maxHistory: config.maxHistory,
-            maxTaskChars: config.maxTaskChars,
-            maxOutputBytes: config.maxOutputBytes,
-            maxPatchBytes: config.maxPatchBytes,
-            maxChangedFiles: config.maxChangedFiles,
-            defaultTimeoutMs: config.defaultTimeoutMs,
-            maxTimeoutMs: config.maxTimeoutMs,
-          },
-          stateDirectory: config.stateDirectory,
-        },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify(presentEffectiveConfig(application.config), null, 2)}\n`,
     );
     return;
   }

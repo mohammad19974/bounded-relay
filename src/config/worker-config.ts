@@ -396,3 +396,46 @@ function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === "" ? undefined : trimmed;
 }
+
+/**
+ * The complete non-secret effective configuration, as printed by the CLI
+ * `config` command. Every operator-tunable policy knob must appear here so
+ * the effective policy is verifiable without reading source.
+ */
+export function presentEffectiveConfig(
+  config: WorkerConfig,
+): Record<string, unknown> {
+  return {
+    version: config.version,
+    codexExecutable: config.codexExecutable,
+    gitExecutable: config.gitExecutable,
+    allowedRoots: config.allowedRoots,
+    allowedModels: config.allowedModels,
+    ...(config.defaultModel === undefined
+      ? {}
+      : { defaultModel: config.defaultModel }),
+    ...(config.defaultReasoningEffort === undefined
+      ? {}
+      : { defaultReasoningEffort: config.defaultReasoningEffort }),
+    proposalsEnabled: config.enableProposals,
+    ...(config.proposalBootstrap === undefined
+      ? {}
+      : { proposalBootstrap: config.proposalBootstrap }),
+    authEnvironmentForwarding: config.forwardAuthEnvironment,
+    forwardedEnvironmentNames: config.forwardEnvironment,
+    limits: {
+      maxConcurrent: config.maxConcurrent,
+      maxQueued: config.maxQueued,
+      maxHistory: config.maxHistory,
+      maxTaskChars: config.maxTaskChars,
+      maxOutputBytes: config.maxOutputBytes,
+      maxStderrBytes: config.maxStderrBytes,
+      maxPatchBytes: config.maxPatchBytes,
+      maxChangedFiles: config.maxChangedFiles,
+      defaultTimeoutMs: config.defaultTimeoutMs,
+      maxTimeoutMs: config.maxTimeoutMs,
+      proposalBootstrapTimeoutMs: config.proposalBootstrapTimeoutMs,
+    },
+    stateDirectory: config.stateDirectory,
+  };
+}

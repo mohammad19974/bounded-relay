@@ -30,9 +30,40 @@ contracts are validated.
   `finalMessage` (marking it partial) instead of refusing the whole frame, so a
   large completed result can never become permanently unreadable over MCP.
 - Guardrails on the new defaults: `CCW_DEFAULT_REASONING_EFFORT=ultra` fails
-  configuration closed (ultra stays a per-job opt-in), server defaults are not
-  injected into resumed sessions, and `sessionPersisted` appears only after a
-  recorded session id was actually observed.
+  configuration closed (ultra stays a per-job opt-in), and `sessionPersisted`
+  appears only after a recorded session id was actually observed.
+- Work preservation on every terminal path: a completed Codex answer survives a
+  failing proposal finalization, workspace cleanup, or lease release; a cancel
+  that lands after the runtime finished returns the real result instead of an
+  empty cancellation; the chunk that trips the stdout budget is still parsed so
+  the answer it carries is not discarded; and terminal-history eviction now
+  orders by completion time so a long job's result is readable before it can be
+  evicted.
+- `codex_worker_propose` now forwards `resumeSessionId` and `persistSession`, so
+  a proposal can continue the analyze thread that planned it and record its own
+  thread for a repair round. Both fields were previously accepted by the schema
+  and silently dropped.
+- The request fingerprint includes `resumeSessionId` and `persistSession`, so
+  two continuations of different threads cannot collide on one idempotency key.
+- Structured SDD reviews get a JSON-only output instruction instead of the prose
+  thoroughness contract, which could otherwise corrupt their schema-constrained
+  decision.
+- The final-message wire budget accounts for an attached patch, so a
+  policy-valid proposal result is never refused whole; bootstrap failures name
+  their exit status or timeout.
+- Policy observability: `config`, `doctor`, and `codex_worker_capabilities` now
+  surface the server-owned defaults (`defaultModel`, `defaultReasoningEffort`),
+  the stderr budget, and whether a proposal bootstrap is configured, so the
+  effective delegation policy is verifiable without reading source. `doctor`
+  and capabilities also report a `buildId` — the running module's build
+  fingerprint, which the frozen package version cannot provide — and warn when
+  a configured bootstrap command cannot be resolved on `PATH`.
+- Bootstrap robustness: its output is discarded rather than buffered, so a
+  verbose but successful install is no longer turned into a proposal failure;
+  a cancel aborts a running bootstrap instead of waiting out the whole window
+  while the repository lease is held.
+- A JSONL consumer's own typed error is reported as itself instead of being
+  relabelled as a non-JSON stdout line.
 - Operator-declared proposal-clone bootstrap (`CCW_PROPOSAL_BOOTSTRAP` +
   `CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS`, ADR 0003 amendment): a server-owned argv,
   run once per fresh clone without a shell, can install dependencies so Codex

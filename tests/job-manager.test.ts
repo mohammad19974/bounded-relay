@@ -678,20 +678,12 @@ describe("JobManager lifecycle", () => {
     expect(terminal.sessionPersisted).toBe(true);
   });
 
-  test("does not inject server default model or effort into a resumed session", async () => {
+  test("lets an explicit model and effort override the defaults on a resume", async () => {
     const { manager, repository } = await makeManager({
       allowedModels: ["gpt-5.6-sol"],
       defaultModel: "gpt-5.6-sol",
       defaultReasoningEffort: "high",
     });
-    const resumed = await manager.submit({
-      task: "continue exactly as before",
-      cwd: repository.root,
-      resumeSessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
-    });
-    expect(resumed.model).toBeUndefined();
-    expect(resumed.reasoningEffort).toBeUndefined();
-
     const explicit = await manager.submit({
       task: "continue with an explicit model",
       cwd: repository.root,
@@ -768,6 +760,116 @@ describe("JobManager lifecycle", () => {
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.partialResultAvailable).toBeUndefined();
     expect(manager.result(submitted.id).finalMessage).toBeUndefined();
+  });
+
+  test("applies server defaults to a resumed job so it never runs at the CLI default effort", async () => {
+    const { manager, repository } = await makeManager({
+      allowedModels: ["gpt-5.6-sol"],
+      defaultModel: "gpt-5.6-sol",
+      defaultReasoningEffort: "high",
+    });
+    // Omitting the flags does not preserve the thread's original model; it
+    // drops Codex to its built-in default effort, which is the exact failure
+    // the server-owned defaults exist to prevent.
+    await expect(
+      manager.submit({
+        task: "continue the thread",
+        cwd: repository.root,
+        resumeSessionId: "01a0493b-30d2-7cd2-b01c-52db2a4bca0e",
+      }),
+    ).resolves.toMatchObject({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    });
+  });
+
+  test("keeps a completed run's final message when proposal finalization fails", async () => {
+    const { manager, runtime, repository } = await makeManager({
+      enableProposals: true,
+      maxConcurrent: 1,
+    });
+    const submitted = await manager.submit({
+      task: "propose a change",
+      cwd: repository.root,
+      mode: "proposal",
+      expectedRevision: repository.revision,
+      writePaths: ["src"],
+    });
+    await waitForRuns(runtime, 1);
+    const run = runtime.runs[0];
+    // Write outside the lease so finalize() rejects the patch after Codex
+    // already produced a complete, valuable report.
+    await writeFile(
+      join(run?.request.executionRoot ?? "", "README.md"),
+      "escaped\n",
+      "utf8",
+    );
+    run?.resolve({
+      outcome: "completed",
+      finalMessage: "Full report: what I changed, why, and how I verified it.",
+      resultTruncated: false,
+    });
+    const failed = await waitForTerminal(manager, submitted.id, 5_000);
+    expect(failed.status).toBe("failed");
+    expect(failed.partialResultAvailable).toBe(true);
+    expect(manager.result(submitted.id).finalMessage).toBe(
+      "Full report: what I changed, why, and how I verified it.",
+    );
+  });
+
+  test("keeps a completed result when cancellation lands after the runtime finished", async () => {
+    const { manager, runtime, repository } = await makeManager();
+    const submitted = await manager.submit({
+      task: "race the cancel",
+      cwd: repository.root,
+    });
+    await waitForRuns(runtime, 1);
+    runtime.runs[0]?.resolve({
+      outcome: "completed",
+      finalMessage: "finished before the cancel arrived",
+      resultTruncated: false,
+    });
+    await manager.cancel(submitted.id);
+    const terminal = await waitForTerminal(manager, submitted.id);
+    expect(terminal.status).toBe("completed");
+    expect(manager.result(submitted.id).finalMessage).toBe(
+      "finished before the cancel arrived",
+    );
+  });
+
+  test("evicts history by completion order so a long job survives to be read", async () => {
+    const { manager, runtime, repository } = await makeManager({
+      maxConcurrent: 2,
+      maxHistory: 3,
+    });
+    const long = await manager.submit({ task: "long", cwd: repository.root });
+    await waitForRuns(runtime, 1);
+    for (let index = 0; index < 3; index += 1) {
+      const short = await manager.submit({
+        task: `short-${index}`,
+        cwd: repository.root,
+      });
+      await waitForRuns(runtime, index + 2);
+      runtime.runs[index + 1]?.resolve({
+        outcome: "completed",
+        finalMessage: `short ${index}`,
+        resultTruncated: false,
+      });
+      await waitForTerminal(manager, short.id);
+    }
+    runtime.runs[0]?.resolve({
+      outcome: "completed",
+      finalMessage: "the long job's answer",
+      resultTruncated: false,
+    });
+    await waitForTerminal(manager, long.id);
+
+    // The oldest-created job finished last; evicting by creation time would
+    // delete its result the instant it became readable.
+    expect(manager.result(long.id)).toMatchObject({
+      ready: true,
+      finalMessage: "the long job's answer",
+    });
   });
 
   test("throws a typed error for unknown jobs", async () => {

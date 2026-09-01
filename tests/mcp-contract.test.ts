@@ -70,6 +70,7 @@ describe("MCP stdio contract", () => {
         compatible: true,
         authenticated: true,
         proposalsEnabled: false,
+        proposalBootstrapConfigured: false,
         transport: "stdio",
         routingPolicies: {
           legacy: { routingPolicyVersion: "sdd-routing-v2" },

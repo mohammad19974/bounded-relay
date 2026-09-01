@@ -127,6 +127,22 @@ process.stdin.on("end", () => {
     case "output-limit":
       process.stdout.write("x".repeat(256_000));
       break;
+    case "output-limit-with-final": {
+      // The chunk that crosses the budget also carries the complete answer.
+      const padding = Array.from({ length: 200 }, (_, index) =>
+        JSON.stringify({
+          type: "item.completed",
+          item: { type: "reasoning", text: `step ${index} ${"p".repeat(40)}` },
+        }),
+      ).join("\n");
+      process.stdout.write(
+        `${padding}\n${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "COMPLETE FINAL ANSWER" },
+        })}\n${JSON.stringify({ type: "turn.completed", usage: {} })}\n`,
+      );
+      break;
+    }
     case "timeout":
       process.on("SIGTERM", () => process.exit(0));
       setInterval(() => undefined, 1_000);

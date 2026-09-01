@@ -73,6 +73,8 @@ export class JobManager {
   readonly #idempotency = new Map<string, string>();
   readonly #queue: string[] = [];
   readonly #handles = new Map<string, RuntimeHandle>();
+  /** Aborts preparation work that runs before a runtime handle exists. */
+  readonly #preparations = new Map<string, AbortController>();
   readonly #executions = new Map<string, Promise<void>>();
   #activeCount = 0;
   #pumpRunning = false;
@@ -278,6 +280,9 @@ export class JobManager {
       return this.#snapshot(job);
     }
 
+    // Preparation can hold the repository lease for minutes before a runtime
+    // handle exists; abort it so a cancel is honoured immediately.
+    this.#preparations.get(job.id)?.abort();
     const handle = this.#handles.get(job.id);
     if (handle !== undefined) {
       await handle.cancel("user");
@@ -431,15 +436,13 @@ export class JobManager {
       allowedRoots: this.#config.allowedRoots,
     });
     const taskHash = createHash("sha256").update(task).digest("hex");
-    // Server defaults never apply to a resumed session: injecting a model or
-    // effort the caller did not choose would silently switch the recorded
-    // thread mid-conversation. Resumes inherit only explicit caller values.
-    const resuming = input.resumeSessionId !== undefined;
-    const resolvedModel =
-      input.model ?? (resuming ? undefined : this.#config.defaultModel);
+    // Server defaults apply to resumed jobs too. Omitting the flags does not
+    // preserve the thread's original model — Codex falls back to its built-in
+    // default at minimal effort, which is exactly what these defaults exist to
+    // prevent. Callers who need a different model still pass it explicitly.
+    const resolvedModel = input.model ?? this.#config.defaultModel;
     const resolvedReasoningEffort =
-      input.reasoningEffort ??
-      (resuming ? undefined : this.#config.defaultReasoningEffort);
+      input.reasoningEffort ?? this.#config.defaultReasoningEffort;
 
     return {
       task,
@@ -536,7 +539,16 @@ export class JobManager {
         this.#setActivity(job, "starting", "preparing_workspace");
         this.#touch(job);
         lease = await this.#leases.acquire(job.request.repositoryRoot, job.id);
-        prepared = await this.#proposalWorkspace.prepare(job.request);
+        const preparation = new AbortController();
+        this.#preparations.set(job.id, preparation);
+        try {
+          prepared = await this.#proposalWorkspace.prepare(
+            job.request,
+            preparation.signal,
+          );
+        } finally {
+          this.#preparations.delete(job.id);
+        }
         runtimeRequest = prepared.request;
       } else if (job.request.sddReview?.seal.mode === "strict") {
         this.#setActivity(job, "starting", "preparing_review_workspace");
@@ -618,13 +630,23 @@ export class JobManager {
       job.resultTruncated = runtimeResult.resultTruncated;
     }
 
-    if (job.cancellationRequested && failure === undefined) {
+    // A cancel that lands after the runtime already finished must not discard
+    // completed work; the caller gets the real result instead of an empty
+    // cancellation.
+    if (
+      job.cancellationRequested &&
+      failure === undefined &&
+      runtimeResult?.outcome !== "completed"
+    ) {
       runtimeResult = { outcome: "cancelled", resultTruncated: false };
       proposal = undefined;
       review = undefined;
     }
 
     if (failure !== undefined) {
+      // Finalization, cleanup, or lease errors must not erase a complete
+      // Codex answer the run already paid for.
+      this.#salvage(job, runtimeResult);
       this.#markFailed(job, failure);
     } else if (runtimeResult?.outcome === "completed") {
       job.status = "completed";
@@ -647,22 +669,7 @@ export class JobManager {
     } else if (runtimeResult?.outcome === "cancelled") {
       this.#markCancelled(job);
     } else {
-      // Salvage the partial final message so a timeout or budget kill does
-      // not discard the run's work. SDD reviews are excluded: only validated
-      // review evidence may represent a review outcome.
-      if (
-        job.request.sddReview === undefined &&
-        runtimeResult?.finalMessage !== undefined &&
-        runtimeResult.finalMessage.trim() !== ""
-      ) {
-        job.finalMessage = runtimeResult.finalMessage;
-      }
-      if (runtimeResult?.sessionId !== undefined) {
-        job.sessionId = runtimeResult.sessionId;
-      }
-      if (runtimeResult?.usage !== undefined) {
-        job.usage = runtimeResult.usage;
-      }
+      this.#salvage(job, runtimeResult);
       this.#markFailed(
         job,
         normalizePublicRuntimeFailure(runtimeResult?.failure),
@@ -707,6 +714,29 @@ export class JobManager {
       job.usage = event.usage;
     }
     this.#touch(job);
+  }
+
+  /**
+   * Keeps whatever a failing run already produced. SDD reviews are excluded:
+   * only validated review evidence may represent a review outcome.
+   */
+  #salvage(job: InternalJob, runtimeResult: RuntimeResult | undefined): void {
+    if (runtimeResult === undefined) {
+      return;
+    }
+    if (
+      job.request.sddReview === undefined &&
+      runtimeResult.finalMessage !== undefined &&
+      runtimeResult.finalMessage.trim() !== ""
+    ) {
+      job.finalMessage = runtimeResult.finalMessage;
+    }
+    if (runtimeResult.sessionId !== undefined) {
+      job.sessionId = runtimeResult.sessionId;
+    }
+    if (runtimeResult.usage !== undefined) {
+      job.usage = runtimeResult.usage;
+    }
   }
 
   #markFailed(job: InternalJob, failure: WorkerFailure): void {
@@ -858,9 +888,16 @@ export class JobManager {
   }
 
   #evictHistory(): void {
+    // Evict by completion order, not creation order: a long job created first
+    // finishes last, and creation order would delete its result the instant it
+    // became readable.
     const terminalJobs = [...this.#jobs.values()]
       .filter((job) => isTerminal(job.status))
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      .sort((left, right) =>
+        (left.completedAt ?? left.createdAt).localeCompare(
+          right.completedAt ?? right.createdAt,
+        ),
+      );
     // The bound applies to retained history only. Queued and running jobs are
     // never evicted and must never displace a result the caller can still read.
     let retained = terminalJobs.length;
@@ -891,6 +928,10 @@ function requestFingerprint(request: ResolvedJobRequest): string {
         model: request.model ?? null,
         reasoningEffort: request.reasoningEffort ?? null,
         timeoutMs: request.timeoutMs,
+        // Two continuations of different threads are different requests even
+        // when their task text matches.
+        resumeSessionId: request.resumeSessionId ?? null,
+        persistSession: request.persistSession ?? false,
         sddReview:
           request.sddReview === undefined
             ? null

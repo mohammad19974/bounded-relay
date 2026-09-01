@@ -141,6 +141,9 @@ describe.runIf(process.platform !== "win32")(
         gitExecutable: fakeCodex,
         allowedRoots: ["/safe/repository"],
         allowedModels: ["gpt-5.6-sol"],
+        defaultModel: "gpt-5.6-sol",
+        defaultReasoningEffort: "high",
+        proposalBootstrap: ["pnpm", "install", "--offline"],
         enableProposals: true,
         forwardAuthEnvironment: true,
         forwardEnvironment: [
@@ -162,11 +165,31 @@ describe.runIf(process.platform !== "win32")(
         gitVersion: "codex-cli 99.0.0-test",
         proposalsEnabled: true,
         authEnvironmentForwarding: true,
+        // Operators must be able to verify the effective delegation policy
+        // without reading source.
+        defaultModel: "gpt-5.6-sol",
+        defaultReasoningEffort: "high",
+        proposalBootstrapConfigured: true,
       });
+      // A frozen package version cannot reveal that a long-lived server
+      // predates a rebuild; the build fingerprint can.
+      expect(healthy.buildId).toEqual(expect.any(String));
+      expect(Number.isNaN(Date.parse(healthy.buildId ?? ""))).toBe(false);
       expect(healthy.warnings).toEqual([
         "Proposal mode is enabled; only validated patches are returned and never applied",
         "Explicit authentication environment forwarding is enabled",
       ]);
+
+      const unresolvableBootstrap = await collectWorkerHealth(
+        makeConfig({
+          ...config,
+          proposalBootstrap: ["definitely-not-an-installed-command", "install"],
+        }),
+        { PATH: process.env.PATH, FAKE_LOGIN_FAIL: "0" },
+      );
+      expect(unresolvableBootstrap.warnings).toContain(
+        "The configured proposal bootstrap command could not be resolved on PATH",
+      );
 
       const unhealthy = await collectWorkerHealth(config, {
         PATH: process.env.PATH,
@@ -226,7 +249,11 @@ describe.runIf(process.platform !== "win32")(
       await expect(application.health()).resolves.toMatchObject({
         authenticated: true,
         proposalsEnabled: false,
+        proposalBootstrapConfigured: false,
       });
+      const bareHealth = await application.health();
+      expect(bareHealth.defaultModel).toBeUndefined();
+      expect(bareHealth.defaultReasoningEffort).toBeUndefined();
       await application.jobs.shutdown();
     }, 15_000);
 

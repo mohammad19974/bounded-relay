@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, posix, resolve } from "node:path";
-import { promisify } from "node:util";
 
 import type { WorkerConfig } from "../config/worker-config.js";
 import type { ProposalArtifact, ResolvedJobRequest } from "../core/types.js";
@@ -13,8 +12,6 @@ import {
   isProtectedProposalPath,
 } from "../security/path-policy.js";
 import type { GitClient } from "./git-client.js";
-
-const execFileAsync = promisify(execFile);
 
 export interface PreparedProposal {
   readonly request: ResolvedJobRequest;
@@ -43,7 +40,10 @@ export class ProposalWorkspace {
     await mkdir(this.#workspacesDirectory, { recursive: true, mode: 0o700 });
   }
 
-  public async prepare(request: ResolvedJobRequest): Promise<PreparedProposal> {
+  public async prepare(
+    request: ResolvedJobRequest,
+    cancellationSignal?: AbortSignal,
+  ): Promise<PreparedProposal> {
     if (request.mode !== "proposal") {
       throw new WorkerError(
         ERROR_CODES.INVALID_REQUEST,
@@ -106,7 +106,10 @@ export class ProposalWorkspace {
         );
       }
       const baselineRefs = await this.#refsDigest(stageRoot);
-      const dependenciesReady = await this.#runBootstrap(stageRoot);
+      const dependenciesReady = await this.#runBootstrap(
+        stageRoot,
+        cancellationSignal,
+      );
       const stagedRequest: ResolvedJobRequest = {
         ...request,
         executionRoot: stageRoot,
@@ -145,7 +148,10 @@ export class ProposalWorkspace {
    * without a shell. Any failure fails the whole preparation closed; child
    * output is captured bounded and discarded, never surfaced.
    */
-  async #runBootstrap(stageRoot: string): Promise<boolean> {
+  async #runBootstrap(
+    stageRoot: string,
+    cancellationSignal: AbortSignal | undefined,
+  ): Promise<boolean> {
     const bootstrap = this.#config.proposalBootstrap;
     if (bootstrap === undefined) {
       return false;
@@ -157,21 +163,68 @@ export class ProposalWorkspace {
     }
     const bootstrapArguments = bootstrap.slice(1);
     try {
-      await execFileAsync(executable, bootstrapArguments, {
-        cwd: stageRoot,
-        env: buildChildEnvironment(process.env, this.#config),
-        timeout: this.#config.proposalBootstrapTimeoutMs,
-        killSignal: "SIGKILL",
-        maxBuffer: 4_000_000,
-        windowsHide: true,
-      });
+      await this.#spawnBootstrap(
+        executable,
+        bootstrapArguments,
+        stageRoot,
+        cancellationSignal,
+      );
       return true;
-    } catch {
+    } catch (error) {
+      // Server-derived exit status only; the child's own output is never
+      // surfaced, but an unattributable failure is undiagnosable.
+      const code = (error as { code?: unknown }).code;
+      const detail =
+        typeof code === "number" || typeof code === "string"
+          ? ` (exit status ${code})`
+          : "";
       throw new WorkerError(
         ERROR_CODES.RUNTIME_FAILED,
-        "The proposal workspace bootstrap command failed or timed out",
+        `The proposal workspace bootstrap command failed or timed out${detail}`,
       );
     }
+  }
+
+  /**
+   * Runs the bootstrap child with its output discarded rather than buffered,
+   * so a verbose but successful install cannot fail a proposal. Preparation
+   * runs before the job's runtime timer exists and holds the repository lease,
+   * so both the configured timeout and a cancel must terminate it here.
+   */
+  async #spawnBootstrap(
+    executable: string,
+    bootstrapArguments: readonly string[],
+    stageRoot: string,
+    cancellationSignal: AbortSignal | undefined,
+  ): Promise<void> {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const child = spawn(executable, [...bootstrapArguments], {
+        cwd: stageRoot,
+        env: buildChildEnvironment(process.env, this.#config),
+        shell: false,
+        stdio: "ignore",
+        timeout: this.#config.proposalBootstrapTimeoutMs,
+        killSignal: "SIGKILL",
+        ...(cancellationSignal === undefined
+          ? {}
+          : { signal: cancellationSignal }),
+        windowsHide: true,
+      });
+      child.once("error", (error: NodeJS.ErrnoException) => {
+        rejectPromise(error);
+      });
+      child.once("close", (code, signal) => {
+        if (code === 0) {
+          resolvePromise();
+          return;
+        }
+        const failure: NodeJS.ErrnoException = new Error(
+          "bootstrap did not exit successfully",
+        );
+        failure.code = signal ?? String(code);
+        rejectPromise(failure);
+      });
+    });
   }
 
   async #assertCleanSource(request: ResolvedJobRequest): Promise<void> {
