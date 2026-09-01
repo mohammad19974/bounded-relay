@@ -543,8 +543,8 @@ The result is an object with a `jobs` array:
 }
 ```
 
-`codex_worker_capabilities` additionally reports `buildId`, the running
-worker module's build fingerprint. The package version is a frozen constant, so
+`codex_worker_capabilities` additionally reports `buildId`, the running worker
+module's build fingerprint. The package version is a frozen constant, so
 `buildId` is the field that reveals a long-lived server still running code from
 before a rebuild.
 

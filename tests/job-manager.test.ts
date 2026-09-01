@@ -872,6 +872,59 @@ describe("JobManager lifecycle", () => {
     });
   });
 
+  test("refuses a task body that omits a required section and names what is missing", async () => {
+    const { manager, repository } = await makeManager({
+      requiredTaskSections: [
+        "GOAL:",
+        "ACCEPTANCE CRITERIA:",
+        "OUTPUT CONTRACT:",
+      ],
+    });
+
+    const refusal = await manager
+      .submit({
+        task: "Have a look at the AI package and tell me what you think.",
+        cwd: repository.root,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error as { code: string; message: string },
+      );
+    expect(refusal?.code).toBe(ERROR_CODES.INVALID_REQUEST);
+    // The caller must be told exactly what to add, not just that it failed.
+    for (const section of [
+      "GOAL:",
+      "ACCEPTANCE CRITERIA:",
+      "OUTPUT CONTRACT:",
+    ]) {
+      expect(refusal?.message).toContain(section);
+    }
+
+    // Matching is case-insensitive so a differently cased heading still counts.
+    await expect(
+      manager.submit({
+        task: [
+          "goal: find why validate-plan rejects valid ops",
+          "acceptance criteria: name the exact failing branch",
+          "output contract: findings as file:line with quoted evidence",
+        ].join("\n"),
+        cwd: repository.root,
+      }),
+    ).resolves.toMatchObject({ mode: "analyze" });
+  });
+
+  test("exempts worker-generated review tasks from the task-section contract", async () => {
+    const { manager, repository } = await makeManager({
+      requiredTaskSections: ["GOAL:", "OUTPUT CONTRACT:"],
+    });
+
+    // The review task text is built by the worker, not the caller, so the
+    // caller contract must not block it.
+    await expect(
+      manager.submitReview(strictReviewInput(repository)),
+    ).resolves.toMatchObject({ mode: "analyze" });
+  });
+
   test("throws a typed error for unknown jobs", async () => {
     const { manager } = await makeManager();
     await expect(manager.status("missing")).rejects.toMatchObject({

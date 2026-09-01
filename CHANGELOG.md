@@ -54,16 +54,21 @@ contracts are validated.
 - Policy observability: `config`, `doctor`, and `codex_worker_capabilities` now
   surface the server-owned defaults (`defaultModel`, `defaultReasoningEffort`),
   the stderr budget, and whether a proposal bootstrap is configured, so the
-  effective delegation policy is verifiable without reading source. `doctor`
-  and capabilities also report a `buildId` — the running module's build
-  fingerprint, which the frozen package version cannot provide — and warn when
-  a configured bootstrap command cannot be resolved on `PATH`.
+  effective delegation policy is verifiable without reading source. `doctor` and
+  capabilities also report a `buildId` — the running module's build fingerprint,
+  which the frozen package version cannot provide — and warn when a configured
+  bootstrap command cannot be resolved on `PATH`.
 - Bootstrap robustness: its output is discarded rather than buffered, so a
-  verbose but successful install is no longer turned into a proposal failure;
-  a cancel aborts a running bootstrap instead of waiting out the whole window
+  verbose but successful install is no longer turned into a proposal failure; a
+  cancel aborts a running bootstrap instead of waiting out the whole window
   while the repository lease is held.
 - A JSONL consumer's own typed error is reported as itself instead of being
   relabelled as a non-JSON stdout line.
+- `CCW_REQUIRE_TASK_SECTIONS`: an optional structural contract for
+  caller-authored task bodies. A delegation missing a required heading is
+  refused before a job is created, with the missing headings named, so an
+  under-specified brief fails closed instead of quietly producing a weak result.
+  Worker-generated SDD review tasks are exempt.
 - Operator-declared proposal-clone bootstrap (`CCW_PROPOSAL_BOOTSTRAP` +
   `CCW_PROPOSAL_BOOTSTRAP_TIMEOUT_MS`, ADR 0003 amendment): a server-owned argv,
   run once per fresh clone without a shell, can install dependencies so Codex

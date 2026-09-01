@@ -42,6 +42,7 @@ export function makeConfig(
     maxConcurrent: 2,
     maxQueued: 32,
     maxHistory: 100,
+    requiredTaskSections: [],
     maxTaskChars: 20_000,
     maxOutputBytes: 1_000_000,
     maxStderrBytes: 10_000_000,

@@ -74,6 +74,41 @@ describe("loadWorkerConfig", () => {
     expect(config.maxStderrBytes).toBe(32_768);
   });
 
+  test("parses the required task sections", () => {
+    const config = loadWorkerConfig(
+      {
+        CCW_REQUIRE_TASK_SECTIONS:
+          "GOAL:, ACCEPTANCE CRITERIA:,OUTPUT CONTRACT:,GOAL:",
+      },
+      tmpdir(),
+    );
+
+    expect(config.requiredTaskSections).toEqual([
+      "GOAL:",
+      "ACCEPTANCE CRITERIA:",
+      "OUTPUT CONTRACT:",
+    ]);
+  });
+
+  test("leaves the task-section contract unset by default", () => {
+    expect(loadWorkerConfig({}, tmpdir()).requiredTaskSections).toEqual([]);
+  });
+
+  test.each([
+    [
+      Array.from({ length: 17 }, (_, index) => `S${String(index)}:`).join(","),
+      "at most 16",
+    ],
+    [`${"x".repeat(65)}:`, "1-64 characters"],
+  ])(
+    "rejects an invalid task-section contract %#",
+    (value: string, message: string) => {
+      expect(() =>
+        loadWorkerConfig({ CCW_REQUIRE_TASK_SECTIONS: value }, tmpdir()),
+      ).toThrow(message);
+    },
+  );
+
   test("parses the proposal bootstrap argv and timeout", () => {
     const config = loadWorkerConfig(
       {

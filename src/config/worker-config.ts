@@ -26,6 +26,13 @@ export interface WorkerConfig {
   readonly maxConcurrent: number;
   readonly maxQueued: number;
   readonly maxHistory: number;
+  /**
+   * Literal headings a caller-authored task body must contain. It is a
+   * structural input contract, not a quality judgement: it makes an
+   * under-specified delegation fail closed instead of quietly producing a
+   * weak result.
+   */
+  readonly requiredTaskSections: readonly string[];
   readonly maxTaskChars: number;
   readonly maxOutputBytes: number;
   /** Separate stderr byte budget so log noise cannot exhaust the stdout budget. */
@@ -186,6 +193,35 @@ function parseDefaultReasoningEffort(
   return effort as ReasoningEffort;
 }
 
+function parseRequiredTaskSections(
+  value: string | undefined,
+): readonly string[] {
+  const raw = nonEmpty(value);
+  if (raw === undefined) {
+    return [];
+  }
+  const sections = raw
+    .split(",")
+    .map((section) => section.trim())
+    .filter(Boolean);
+  for (const section of sections) {
+    if (section.length > 64 || section.includes("\0")) {
+      throw new WorkerError(
+        ERROR_CODES.CONFIG_INVALID,
+        "CCW_REQUIRE_TASK_SECTIONS entries must be 1-64 characters without a null byte",
+      );
+    }
+  }
+  const unique = [...new Set(sections)];
+  if (unique.length > 16) {
+    throw new WorkerError(
+      ERROR_CODES.CONFIG_INVALID,
+      "CCW_REQUIRE_TASK_SECTIONS must contain at most 16 unique headings",
+    );
+  }
+  return unique;
+}
+
 function parseProposalBootstrap(
   value: string | undefined,
 ): readonly string[] | undefined {
@@ -323,6 +359,9 @@ export function loadWorkerConfig(
       10,
       1_000,
     ),
+    requiredTaskSections: parseRequiredTaskSections(
+      environment.CCW_REQUIRE_TASK_SECTIONS,
+    ),
     maxTaskChars: parseInteger(
       "CCW_MAX_TASK_CHARS",
       environment.CCW_MAX_TASK_CHARS,
@@ -423,6 +462,9 @@ export function presentEffectiveConfig(
       : { proposalBootstrap: config.proposalBootstrap }),
     authEnvironmentForwarding: config.forwardAuthEnvironment,
     forwardedEnvironmentNames: config.forwardEnvironment,
+    ...(config.requiredTaskSections.length === 0
+      ? {}
+      : { requiredTaskSections: config.requiredTaskSections }),
     limits: {
       maxConcurrent: config.maxConcurrent,
       maxQueued: config.maxQueued,
